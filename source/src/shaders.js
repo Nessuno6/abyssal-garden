@@ -476,7 +476,7 @@ const WK = array<vec3f, 10>(vec3f(1., 2., 1.), vec3f(-2., 1., .9), vec3f(3., 1.,
 
 // ---------------------------------------------------------------- shared scene code
 const S_G = /*wgsl*/`
-struct G { vp: mat4x4f, sm: mat4x4f, cam: vec4f, right: vec4f, up: vec4f, fwd: vec4f, sun: vec4f, res: vec4f, mis: vec4f, wrap: vec4f, fog: vec4f, wat: vec4f, son: vec4f };
+struct G { vp: mat4x4f, sm: mat4x4f, cam: vec4f, right: vec4f, up: vec4f, fwd: vec4f, sun: vec4f, res: vec4f, mis: vec4f, wrap: vec4f, fog: vec4f, wat: vec4f, son: vec4f, sb: vec4f, sbh: vec4f };
 const SIG = vec3f(.058, .0235, .0195);
 const KD = vec3f(.056, .0245, .0170);
 const WCOL = vec3f(.16, .58, .90);
@@ -852,6 +852,12 @@ fn leafV(vi: u32, A: vec4f, Bv: vec4f, ty: i32, s1: f32, s2: f32, bend: f32) -> 
   let sw = sway(WP(A.xyz).xz, hA + (p.y - A.y), t);
   p.x += sw.x; p.z += sw.y;
   o.cp = g.vp * vec4f(p, 1.); o.wp = p; o.n = normalize(N2 + S * u * .55 - T0 * cos(v * 10. + s2 * 30. + t * .6) * u * .7 * nearK); o.uv = vec2f(u, v);
+  // no plants inside your submarine's hull (g.sb: centre in render space + heading, g.sbh: half length, width, height)
+  if (g.sbh.x > 0.) {
+    let r = A.xyz - g.sb.xyz; let ca = cos(g.sb.w); let sa = sin(g.sb.w);
+    let q = vec3f(r.x * ca - r.z * sa, r.y, r.x * sa + r.z * ca); // into the sub's frame (inverse of its yaw quaternion)
+    if (all(abs(q) < vec3f(g.sbh.y, g.sbh.z, g.sbh.x))) { o.cp = vec4f(0., 0., -1., 1.); }
+  }
   o.col = col; o.pr = pr; o.sd = vec2f(s1, s2); o.spc = spc;
   return o;
 }

@@ -276,6 +276,12 @@ function subUniforms(m) {
   // sonar pulse: origin (render space: x / z relative to the camera) and age; -1 when none
   const age = SUBM.pulse !== undefined && inside ? F[TIME] - SUBM.pulse : -1, o = SUBM.pulseO;
   m[72] = o ? o[0] - F[CX] : 0; m[73] = o ? o[1] : 0; m[74] = o ? o[2] - F[CZ] : 0; m[75] = age >= 0 && age < 6 ? age : -1;
+  // the hull as a box, for culling plants inside it (sub-local: x across, y up, z along)
+  if (SUBM.m >= 0) {
+    const hb = CUSTOM[SUBM.m].hb;
+    m[76] = SUBM.x - F[CX]; m[77] = SUBM.y; m[78] = SUBM.z - F[CZ]; m[79] = PI - SUBM.yaw;
+    m[80] = hb[2] * SUB_LEN; m[81] = hb[0] * SUB_LEN; m[82] = hb[1] * SUB_LEN * 1.1; m[83] = 0;
+  } else m[80] = 0;
   m[66] = lit ? 1 : 0; m[67] = inside && SUBM.mode !== 'pilot' || (SUBM.mode === 'pilot' && !THIRD) ? (SUBM.power > 0 || SUBM.ride ? 0.4 : 0.12) : 0;
 }
 // ------------------------------------------------------------- drawing: your sub (with its inside while aboard) and the others'

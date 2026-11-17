@@ -54,8 +54,8 @@ const tCX = tex(CM + 1, CM + 1, 'rgba8unorm', TU.STORAGE_BINDING | TU.TEXTURE_BI
 const arrView = (t) => t.createView({ dimension: '2d-array' });
 
 // uniforms (layouts in shaders.js)
-const UB = new Float32Array(76), UBS = new Float32Array(76); // G: 19 vec4 (the last: the sonar pulse)
-const ubo = ebuf(304, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(304, BU.UNIFORM | BU.COPY_DST);
+const UB = new Float32Array(84), UBS = new Float32Array(84); // G: 21 vec4 (sonar pulse, your sub's hull box)
+const ubo = ebuf(336, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(336, BU.UNIFORM | BU.COPY_DST);
 const WTU = new Float32Array(4), uboW = ebuf(16, BU.UNIFORM | BU.COPY_DST);
 const LVD = new Float32Array(32), lvBuf = ebuf(128, BU.UNIFORM | BU.COPY_DST);
 const wtBuf = ebuf(1088, BU.UNIFORM | BU.COPY_DST);
@@ -714,7 +714,7 @@ function render() {
   let wr = 0, wg = 0, wb = 0, wm = 0, ws = 0;
   for (let i = 0; i < 7; i++) { const w = BIO[i], o = i * 4; wr += w * WATER_C[o]; wg += w * WATER_C[o + 1]; wb += w * WATER_C[o + 2]; wm += w * WATER_C[o + 3]; ws += w; }
   ws = ws || 1; m[68] = wr / ws; m[69] = wg / ws; m[70] = wb / ws; m[71] = wm / ws;
-  for (let i = 32; i < 76; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
+  for (let i = 32; i < 84; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
   // frustum planes in render space, from the rows of the view-projection (reversed, infinite depth: no far plane)
   for (let p = 0; p < 5; p++) {
     const a = p >> 1, sg = p & 1 ? -1 : 1, o = p * 4;
