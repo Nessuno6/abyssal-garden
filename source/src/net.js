@@ -310,6 +310,17 @@ function netInit() {
   $('na').addEventListener('change', () => save({ lastJoin: $('na').value.trim() }));
   netButtons(); netDescribe();
   if (SAVE.join) { const a = SAVE.join; save({ join: 0, netModels: 0 }); NET.name = netName(); netOpen(a, false); }
+  // developer mode: load the game from a dev server (with adb reverse tcp:8080 tcp:8080 the tablet's localhost:8080 is
+  // the PC; localhost counts as a secure page, which WebGPU needs). Code changes then need no new APK, only a reload.
+  const DEV = location.search.includes('dev=1');
+  if (APP || DEV) {
+    $('dv').hidden = false; $('dvn').hidden = false;
+    $('dvu').value = DEV ? location.origin : SAVE.devUrl || 'http://localhost:8080';
+    $('dvn').textContent = DEV ? `Developer mode: this page comes from ${location.origin}. Off goes back to the built-in game.` : 'Developer mode loads the game from a dev server (npm run serve on the PC, then adb reverse tcp:8080 tcp:8080).';
+    $('dvu').addEventListener('keydown', (e) => e.stopPropagation());
+    $('dvon').onclick = () => { const u = $('dvu').value.trim().replace(/\/+$/, ''); if (!/^https?:\/\//.test(u)) return; if (DEV) { location.href = u + '/?dev=1'; return; } save({ devUrl: u }); location.replace(u + '/?dev=1'); };
+    $('dvoff').onclick = () => { if (DEV) location.href = 'http://tauri.localhost/?nodev'; else { save({ devUrl: 0 }); $('dvn').textContent = 'Developer mode is off.'; } };
+  }
   // updates
   const auto = () => SAVE.autoUpd !== 0;
   const litA = () => $('up').querySelectorAll('[data-a]').forEach((b) => { b.className = +b.dataset.a === (auto() ? 1 : 0) ? 'on' : ''; });

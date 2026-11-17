@@ -29,7 +29,7 @@ const DIVER_GLB = existsSync(DIVER) ? readFileSync(DIVER).toString('base64') : '
 let js = `const APP_VERSION = '${APP_VERSION}';\nconst DIVER_GLB = '${DIVER_GLB}';\n` + FILES.map((f) => readFileSync(path.join(here, 'src', f), 'utf8')).join('\n');
 const tpl = readFileSync(path.join(here, 'template.html'), 'utf8');
 // everything runs inside one async function; startup errors are shown on screen
-const wrap = (body) => `(async()=>{${body}\n})().catch(e=>{console.error(e);document.body.className='l e';document.getElementById('s').textContent=(e.cause?'':'Failed to start: ')+e.message});`;
+const wrap = (body) => `if(!self.__DEVGO)(async()=>{${body}\n})().catch(e=>{console.error(e);document.body.className='l e';document.getElementById('s').textContent=(e.cause?'':'Failed to start: ')+e.message});`;
 
 let html;
 if (readable) {

@@ -110,7 +110,7 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
 .o button { flex: 1.1; min-width: 0; padding: .7em 0; background: none; box-shadow: none; color: #e8fbff; }
 .o button:hover { background: #7ff3ff33; }
 .o .on { background: linear-gradient(#9ff6ff, #19c3d6); box-shadow: inset 0 -.2em #0003; color: #03222d; pointer-events: none; }
-#nn, #na { flex: 1.6; min-width: 0; padding: .6em .5em; border: 2px solid #7ff3ff66; border-radius: .4em; background: #021016;
+#nn, #na, #dvu { flex: 1.6; min-width: 0; padding: .6em .5em; border: 2px solid #7ff3ff66; border-radius: .4em; background: #021016;
   font: 700 1em/1.2 system-ui, sans-serif; color: #e8fbff; text-align: center; -webkit-user-select: text; user-select: text; }
 #ng:empty { display: none; }
 #ml { display: grid; gap: .4em; }
@@ -217,6 +217,8 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
       <p id=up class=o><span>Updates</span><button id=uc>Check now</button><button data-a=1>Auto</button><button data-a=0>Manual</button></p>
       <p id=udr class=o hidden><button id=ud></button></p>
       <p id=ust class=nt></p>
+      <p id=dv class=o hidden><span>Developer</span><input id=dvu autocomplete=off spellcheck=false placeholder=http://localhost:8080 aria-label="Dev server address"><button id=dvon>Use</button><button id=dvoff>Off</button></p>
+      <p id=dvn class=nt hidden></p>
       </div>
       <div class=pg data-t=keys hidden>
       <div id=k>
@@ -250,11 +252,23 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
 <pre id=i></pre>
 <p id=fp aria-label="Frame rate"></p>
 <script>
+// developer mode: the installed app (tauri.localhost) loads the game from a dev server instead of its built-in copy
+// (Online tab > Developer). ?nodev comes back from the dev page and turns it off.
+(() => {
+  if (location.hostname !== 'tauri.localhost') return;
+  try {
+    const S = JSON.parse(localStorage.abyssalOW || '{}');
+    if (location.search.includes('nodev')) { delete S.devUrl; localStorage.abyssalOW = JSON.stringify(S); return; }
+    if (S.devUrl) { self.__DEVGO = 1; location.replace(S.devUrl + (S.devUrl.includes('?') ? '&' : '?') + 'dev=1'); }
+  } catch {}
+})();
+</script>
+<script>
 /*SCRIPT*/
 </script>
 <script>
 // offline: cache-first service worker (served over https or localhost; not needed inside Tauri or from file://)
-if ('serviceWorker' in navigator && !window.__TAURI__ && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1'))
+if ('serviceWorker' in navigator && !window.__TAURI__ && !location.search.includes('dev=1') && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1'))
   addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch((e) => console.warn('service worker:', e)));
 </script>
 </body>

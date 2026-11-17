@@ -59,6 +59,11 @@ function cmdClip(name, cls, lunge) {
   const m = CSM[s], c = clipOf(m, name), ix = s * 2;
   if (c < 0) { const S = CUSTOM[m].skin; return `${CUSTOM[m].name} has no “${name}” clip${S ? ` (it has: ${S.anims.map((a) => a.name).join(', ')})` : ' (it is not animated)'}`; }
   MV.clip[ix] = c; MV.t[ix] = 0; MV.once[ix] = 1;
+  // a leviathan farther than 40 m first swims in: its swim circle moves so it is about 30 m in front of you
+  if (cls === 1) {
+    const q = moverAt(s), t = ahead(30), d = hypot(q[0] - F[CX], q[1] - F[CY], q[2] - F[CZ]);
+    if (d > 40) { CUS[s * 4] += t[0] - q[0]; CUS[s * 4 + 1] += t[1] - q[1]; CUS[s * 4 + 2] += t[2] - q[2]; }
+  }
   if (lunge) {
     const p = moverAt(s), ex = F[CX] - p[0], ey = F[CY] - p[1], ez = F[CZ] - p[2], l = hypot(ex, ey, ez) || 1, reach = max(0, min(l - 4, 18)), o = ix * 3;
     MV.lv[o] = ex / l * reach; MV.lv[o + 1] = ey / l * reach; MV.lv[o + 2] = ez / l * reach; MV.cd[ix] = 12;
@@ -73,7 +78,8 @@ function conRun(line) {
     case 'help': return ['/spawn <model | leviathan | school | manta | turtle | jelly | squid> [count]: in front of you',
       '/kill: remove what /spawn added', '/attack: the nearest imported leviathan lunges at you', '/roar, /hunt: its roar, or start hunting',
       '/anim <clip>: the nearest animated model plays that clip', '/tp <x> <z> [y] | /tp leviathan | landmark | structure | biome',
-      '/mode survival | creative', '/list: loaded models and their clips', '/clear: empty this log'].join('\n');
+      '/mode survival | creative', '/list: loaded models and their clips', '/import <url> [class | auto]: add a model from a URL',
+      '/clear: empty this log'].join('\n');
     case 'spawn': case 'summon': return cmdSpawn(a[0], +a[1]);
     case 'kill': { if (conBase < 0) return 'nothing spawned'; const k = LIFEN[6] - conBase; LIFEN[6] = conBase; conBase = -1; return `removed ${k}`; }
     case 'attack': return cmdClip('attack', 1, true);
@@ -93,6 +99,22 @@ function conRun(line) {
     case 'mode': if (a[0] === 'survival' || a[0] === 'creative') { setMode(a[0]); if (a[0] === 'survival') conShow(false); return 'mode ' + a[0]; } return 'mode survival | creative';
     case 'list': return CUSTOM.slice(0, ACTIVE_IDS.length).map((m) => `${m.name} (${MODEL_CLASSES[m.cls]})${m.skin ? ': ' + m.skin.anims.map((x) => x.name).join(', ') : ''}`).join('\n') || 'no models loaded';
     case 'clear': $('conlog').textContent = ''; return '';
+    case 'import': {
+      const url = w[1]; if (!url) return 'import <url> [structure | plant | creature | leviathan | submarine | boat | auto]';
+      const want = { structure: 's', plant: 'p', creature: 'c', leviathan: 'l', submarine: 'm', boat: 'b' }[a[1]] || 'auto';
+      (async () => {
+        try {
+          conLog(`downloading ${url}…`);
+          const r = await fetch(url); if (!r.ok) throw new Error('HTTP ' + r.status);
+          const name = decodeURIComponent(url.split('/').pop() || 'model');
+          const rec = await fileToRec(new File([await r.arrayBuffer()], name)), m = await parseModelRecord(rec, 64, false);
+          const it = { rec, anims: m.skin ? m.skin.anims.map((x) => x.name) : [] }, cls = want === 'auto' ? guessClass(it) : want;
+          await idbDo('readwrite', (st) => st.put({ ...rec, cls }));
+          conLog(`added ${rec.name} as ${MODEL_CLASSES[cls]}; reloading`); setTimeout(() => location.reload(), 600);
+        } catch (e) { conLog('import failed: ' + e.message); }
+      })();
+      return '';
+    }
     default: return `unknown command “${c}” (/help)`;
   }
 }

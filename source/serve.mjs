@@ -18,4 +18,4 @@ createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
     res.end(data);
   } catch { res.writeHead(404).end('not found'); }
-}).listen(port, () => console.log(`serving ${root} at http://localhost:${port}`));
+}).listen(port, () => console.log(`serving ${root} at http://localhost:${port} (tablet: adb reverse tcp:${port} tcp:${port}, then Developer > Use)`));

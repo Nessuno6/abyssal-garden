@@ -478,6 +478,21 @@ In creative mode, `T` or `/` (or the `⌨` button on touch screens) opens a cons
 
 The World tab also has **Go to** buttons (leviathan, landmark, structure, next biome) for touch screens.
 
+### Developer mode (test without rebuilding the app)
+
+The installed app can load the game from a dev server instead of its built-in copy, so code changes need no new APK
+or installer. Only changes to the Rust or Android code (`src-tauri`) still need one.
+
+1. On the PC: `npm run serve` (in `source/`), and after each change `npm run build:readable`.
+2. Android: `adb reverse tcp:8080 tcp:8080`, so the tablet's `localhost:8080` is the PC. WebGPU needs a secure page, and
+   `localhost` counts as one.
+3. In the app, **Online → Developer**: `http://localhost:8080` → **Use**. The app now starts from the dev server; restart
+   it (or reload) to get the latest build. **Off** goes back to the built-in game.
+
+The dev page has its own settings and models (separate browser storage). Add models there with the console's
+`/import <url> [class]`, for example `/import /test/reaper_leviathan_anim.glb leviathan` for a file in `dist/test`.
+Each model in the Models tab also has its own **Remove** button.
+
 ### Animated creatures: clips follow behaviour
 
 Imported models that use these clip names (as the Blender-animated ones in this project do) switch clips with what
