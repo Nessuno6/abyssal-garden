@@ -1,7 +1,14 @@
 // ============================================================================
-// math + procedural helpers (load-time only unless noted)
+// math + procedural helpers
 // ============================================================================
-const { sin, cos, sqrt, min, max, abs, floor, PI, pow, atan2, hypot, exp, round } = Math;
+// Two kinds of noise live here:
+//  * load-time 3D noise (ihash / vnoise / fbm) used to sculpt meshes once, from the fixed stream rnd()
+//  * the world noise (whu / wvn / wfbm / wwor / wheight): stateless, seeded by WSEED, and mirrored bit for bit
+//    by W_WORLD in shaders.js. Both sides evaluate a point as an integer anchor cell of 1024 m (ax, az) plus a
+//    local offset (lx, lz) in metres, and every lattice frequency is n cells per 1024 m with n an integer, so
+//    lattice coordinates are exact integers (ax * n + floor(lx * n / 1024)) however far from the origin the
+//    point is. The GPU never sees a large float; the CPU keeps the camera in Float64.
+const { sin, cos, sqrt, min, max, abs, floor, ceil, PI, pow, atan2, hypot, exp, round } = Math;
 const TAU = PI * 2;
 let _seed = 20261110;
 const rnd = () => {
@@ -16,6 +23,7 @@ const rseed = (s) => { _seed = (20261110 + Math.imul(s, 7919)) | 0; };
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
 const mix = (a, b, t) => a + (b - a) * t;
 const sstep = (a, b, x) => { x = clamp((x - a) / (b - a), 0, 1); return x * x * (3 - 2 * x); };
+const fract = (x) => x - floor(x);
 
 const ihash = (x, y, z) => {
   let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, 1274126177)) | 0;
@@ -36,6 +44,144 @@ const fbm = (x, y, z, o = 4) => {
   return s / (1 - 2 * a);
 };
 
+// ---------------------------------------------------------------- world noise (mirror of W_WORLD)
+// integer hash of a lattice point: identical u32 arithmetic to hu() in WGSL (Math.imul wraps like u32 *)
+const whu = (x, z, s) => {
+  let h = Math.imul(x, 0x8da6b343) ^ Math.imul(z, 0xd8163841) ^ Math.imul(s, 0xcb1ab31f);
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  return (h ^ (h >>> 16)) >>> 0;
+};
+const whf = (x, z, s) => (whu(x, z, s) >>> 8) / 16777216;
+// value noise with n lattice cells per 1024 m
+function wvn(ax, az, lx, lz, n, s) {
+  const k = n / 1024, px = lx * k, pz = lz * k, x0 = floor(px), z0 = floor(pz);
+  let u = px - x0, v = pz - z0; u = u * u * (3 - 2 * u); v = v * v * (3 - 2 * v);
+  const ix = ax * n + x0, iz = az * n + z0;
+  const a = whf(ix, iz, s), b = whf(ix + 1, iz, s), c = whf(ix, iz + 1, s), d = whf(ix + 1, iz + 1, s);
+  const e = a + (b - a) * u, f = c + (d - c) * u;
+  return e + (f - e) * v;
+}
+// o octaves starting at n cells per 1024 m, normalised to [0, 1]
+function wfbm(ax, az, lx, lz, n, o, s) {
+  let a = 0.5, t = 0;
+  for (let k = 0; k < o; k++) { t += a * wvn(ax, az, lx, lz, n, s + k * 7919); n *= 2; a *= 0.5; }
+  return t / (1 - 2 * a);
+}
+// Worley F1 / F2 (in cell units) into WOR
+const WOR = new Float64Array(2);
+function wwor(ax, az, lx, lz, n, s) {
+  const k = n / 1024, px = lx * k, pz = lz * k, x0 = floor(px), z0 = floor(pz), fx = px - x0, fz = pz - z0;
+  const ix = ax * n + x0, iz = az * n + z0;
+  let d1 = 9, d2 = 9;
+  for (let z = -1; z <= 1; z++) for (let x = -1; x <= 1; x++) {
+    const cx = ix + x, cz = iz + z, ox = x + whf(cx, cz, s) - fx, oz = z + whf(cx, cz, s + 1) - fz, d = ox * ox + oz * oz;
+    if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+  }
+  WOR[0] = sqrt(d1); WOR[1] = sqrt(d2);
+}
+// value noise on big cells of m x 1024 m (m whole tiles): the tile index is split into big cell + offset in integers,
+// so it stays exact far from the origin. Mirror of vnL() in WGSL.
+function wvnL(ax, az, lx, lz, m, s) {
+  const bx = floor(ax / m), bz = floor(az / m), L = m * 1024;
+  const gx = (ax - bx * m) * 1024 + lx, gz = (az - bz * m) * 1024 + lz, ox = floor(gx / L), oz = floor(gz / L);
+  let u = gx / L - ox, v = gz / L - oz; u = u * u * (3 - 2 * u); v = v * v * (3 - 2 * v);
+  const ix = bx + ox, iz = bz + oz;
+  const a = whf(ix, iz, s), b = whf(ix + 1, iz, s), c = whf(ix, iz + 1, s), d = whf(ix + 1, iz + 1, s);
+  const e = a + (b - a) * u, f = c + (d - c) * u;
+  return e + (f - e) * v;
+}
+// seamounts: 40 % of the cells (n per 1024 m) hold one, a rounded cone up to 0.9 cell wide; the result is the
+// tallest one here, 0..1 (a maximum, not a sum, so it is continuous where cones overlap)
+function wsea(ax, az, lx, lz, n, s) {
+  const k = n / 1024, px = lx * k, pz = lz * k, x0 = floor(px), z0 = floor(pz), fx = px - x0, fz = pz - z0;
+  const ix = ax * n + x0, iz = az * n + z0;
+  let m = 0;
+  for (let z = -1; z <= 1; z++) for (let x = -1; x <= 1; x++) {
+    const cx = ix + x, cz = iz + z;
+    if (whf(cx, cz, s + 2) < 0.4) {
+      const ox = x + 0.15 + 0.7 * whf(cx, cz, s) - fx, oz = z + 0.15 + 0.7 * whf(cx, cz, s + 1) - fz;
+      const d = sqrt(ox * ox + oz * oz) / (0.55 + 0.35 * whf(cx, cz, s + 3));
+      if (d < 1) { const t = 1 - sstep(0, 1, d), v = (0.45 + 0.55 * whf(cx, cz, s + 4)) * t * sqrt(t); if (v > m) m = v; }
+    }
+  }
+  return m;
+}
+// steps with steep risers (the last 14 % of each step): cliff walls between flat shelves
+const wcliff = (y, st) => { const k = y / st, f = floor(k); return (f + sstep(0.86, 1, k - f)) * st; };
+const wterrace = (y, st) => { const k = y / st, f = floor(k); return (f + sstep(0.5, 1, k - f)) * st; };
+// Biomes: the sea floor is split into warped Voronoi regions of ~512 m (2 cells per 1024 m), each one biome picked
+// by its cell hash, blended across a ~110 m band at the borders. TB[1..7] = weights of
+//   1 kelp forest, 2 purple grotto, 3 trench / arch canyons, 4 silt plain, 5 coral reef shallows,
+//   6 crystal fields, 7 volcanic vents        (TB[0] = height after wheight)
+const TB = new Float64Array(8), BIOP = [0.19, 0.32, 0.46, 0.6, 0.74, 0.87, 1], WORC = new Int32Array(4);
+const bioId = (cx, cz) => { const r = whf(cx, cz, WSEED + 73); let i = 0; while (r >= BIOP[i]) i++; return i; };
+// Worley F1 / F2 plus the integer coordinates of the two nearest cells (WORC)
+function wworc(ax, az, lx, lz, n, s) {
+  const k = n / 1024, px = lx * k, pz = lz * k, x0 = floor(px), z0 = floor(pz), fx = px - x0, fz = pz - z0;
+  const ix = ax * n + x0, iz = az * n + z0;
+  let d1 = 9, d2 = 9;
+  for (let z = -1; z <= 1; z++) for (let x = -1; x <= 1; x++) {
+    const cx = ix + x, cz = iz + z, ox = x + whf(cx, cz, s) - fx, oz = z + whf(cx, cz, s + 1) - fz, d = ox * ox + oz * oz;
+    if (d < d1) { d2 = d1; WORC[2] = WORC[0]; WORC[3] = WORC[1]; d1 = d; WORC[0] = cx; WORC[1] = cz; } else if (d < d2) { d2 = d; WORC[2] = cx; WORC[3] = cz; }
+  }
+  WOR[0] = sqrt(d1); WOR[1] = sqrt(d2);
+}
+function wbio(ax, az, lx, lz) {
+  const s = WSEED;
+  const qx = lx + (wfbm(ax, az, lx, lz, 4, 3, s + 71) - 0.5) * 260, qz = lz + (wfbm(ax, az, lx, lz, 4, 3, s + 72) - 0.5) * 260;
+  wworc(ax, az, qx, qz, 2, s + 74);
+  const b = sstep(0, 0.22, WOR[1] - WOR[0]);
+  for (let i = 1; i < 8; i++) TB[i] = 0;
+  TB[1 + bioId(WORC[0], WORC[1])] += 0.5 + 0.5 * b;
+  TB[1 + bioId(WORC[2], WORC[3])] += 0.5 - 0.5 * b;
+}
+// seabed height h(x, z) in metres (sea surface at y = 0); also leaves the biome weights in TB
+function wheight(ax, az, lx, lz) {
+  const s = WSEED;
+  wbio(ax, az, lx, lz);
+  const kp = TB[1], gr = TB[2], tr = TB[3], pl = TB[4], rf = TB[5], cr = TB[6], vo = TB[7];
+  const qx = lx + (wfbm(ax, az, lx, lz, 8, 2, s + 5) - 0.5) * 36, qz = lz + (wfbm(ax, az, lx, lz, 8, 2, s + 6) - 0.5) * 36;
+  const base = -46 + 10 * (wfbm(ax, az, lx, lz, 4, 4, s + 1) - 0.5) + 2.4 * (wfbm(ax, az, qx, qz, 32, 3, s + 2) - 0.5);
+  let h = 0;
+  if (kp > 0) { const r = 1 - abs(2 * wfbm(ax, az, qx, qz, 16, 3, s + 3) - 1); h += kp * (base + 3 + 8 * sstep(0.62, 0.95, r) + 0.9 * (wfbm(ax, az, lx, lz, 128, 2, s + 4) - 0.5)); }
+  if (gr > 0) { wwor(ax, az, qx, qz, 16, s + 9); h += gr * (base - 14 + wterrace(22 * (1 - sstep(0, 0.3, WOR[1] - WOR[0])), 4) + 5 * (1 - sstep(0, 0.75, WOR[0]))); }
+  if (tr > 0) { wwor(ax, az, qx, qz, 8, s + 13); const e = WOR[1] - WOR[0]; h += tr * (base + wterrace(16 * sstep(0.3, 0.55, e) - 40 * (1 - sstep(0.04, 0.32, e)), 5) + 1.2 * (wfbm(ax, az, lx, lz, 64, 2, s + 14) - 0.5)); }
+  if (pl > 0) h += pl * (base - 5 + 1.6 * (wfbm(ax, az, lx, lz, 32, 2, s + 15) - 0.5));
+  // reef: a shallow plateau of coral knolls cut by sandy channels, ending in a drop-off at its border
+  if (rf > 0) { wwor(ax, az, qx, qz, 32, s + 21); const ch = 1 - sstep(0, 0.07, abs(wfbm(ax, az, qx, qz, 8, 2, s + 22) - 0.5)); h += rf * (-19 + 5 * (wfbm(ax, az, lx, lz, 16, 3, s + 23) - 0.5) + 4 * (1 - sstep(0, 0.6, WOR[0])) - 6 * ch); }
+  // crystal fields: sharp-ridged dark rock
+  if (cr > 0) { const r = 1 - abs(2 * wfbm(ax, az, qx, qz, 16, 3, s + 25) - 1); h += cr * (base - 3 + 10 * pow(r, 2.5)); }
+  // volcanic vents: a deep basin of cones with craters
+  if (vo > 0) { wwor(ax, az, qx, qz, 8, s + 27); h += vo * (base - 22 + 26 * pow(1 - sstep(0, 0.55, WOR[0]), 1.6) - 7 * (1 - sstep(0, 0.1, WOR[0])) + 1.5 * (wfbm(ax, az, lx, lz, 64, 2, s + 28) - 0.5)); }
+  // patches of rock pinnacles rising from the plains and kelp floors (32 m Worley cells)
+  const pm = sstep(0.55, 0.7, wfbm(ax, az, lx, lz, 4, 2, s + 17));
+  if (pm > 0 && pl + kp > 0) { wwor(ax, az, qx, qz, 32, s + 19); h += (pl + 0.6 * kp) * pm * 16 * pow(1 - sstep(0, 0.38, WOR[0]), 2.5); }
+  // Large-scale depth, across all biomes. rg (0..1) is a regional field on 6 km, 2 km and 1 km cells, warped by
+  // +-160 m: low = shallow shelves (up to 26 m higher), mid = the usual floor, high = abyssal plains (up to 210 m
+  // deeper). In about half of the world the change comes in 38 m steps with cliff walls instead of a slope.
+  const wx = lx + (wfbm(ax, az, lx, lz, 2, 2, s + 85) - 0.5) * 320, wz = lz + (wfbm(ax, az, lx, lz, 2, 2, s + 86) - 0.5) * 320;
+  const rg = sstep(0.2, 0.8, 0.55 * wvnL(ax, az, wx, wz, 6, s + 81) + 0.3 * wvnL(ax, az, wx, wz, 2, s + 82) + 0.15 * wvn(ax, az, wx, wz, 1, s + 83));
+  const dp = sstep(0.55, 0.97, rg);
+  let off = 26 * (1 - sstep(0.12, 0.38, rg)) - 210 * dp * sqrt(sqrt(dp));
+  const cl = sstep(0.35, 0.65, wvn(ax, az, wx, wz, 2, s + 84));
+  off += cl * (wcliff(off, 38) - off);
+  h += off * (1 - 0.6 * rf); // reefs keep closer to the light
+  // seamounts rising from the deeper regions, the tallest to 12 m under the surface
+  const sm = wsea(ax, az, wx, wz, 1, s + 87) * sstep(0.3, 0.6, rg);
+  if (sm > 0) h += sm * max(0, -12 - h) + sm * (1 - sm) * 30 * (wfbm(ax, az, lx, lz, 16, 2, s + 88) - 0.5);
+  // chasms: winding cracks 80-170 m deep with steep walls, in stretches of the world
+  const cm = sstep(0.42, 0.6, wvn(ax, az, lx, lz, 1, s + 89));
+  if (cm > 0) { const c = abs(wfbm(ax, az, wx, wz, 2, 3, s + 90) - 0.5); h -= cm * (80 + 90 * wvn(ax, az, lx, lz, 2, s + 91)) * sstep(0.035, 0.016, c); }
+  h = max(min(h, -6), -480);
+  TB[0] = h;
+  return h;
+}
+// world-space (Float64) entry points
+const hAt = (x, z) => { const ax = floor(x / 1024), az = floor(z / 1024); return wheight(ax, az, x - ax * 1024, z - az * 1024); };
+const bioAt = (x, z) => { const ax = floor(x / 1024), az = floor(z / 1024); wbio(ax, az, x - ax * 1024, z - az * 1024); };
+const hash2 = (x, z, s) => whf(x | 0, z | 0, (WSEED + s) | 0);
+
 // quaternion helpers (return plain arrays; load-time only)
 const qAxis = (x, y, z, a) => { const l = hypot(x, y, z) || 1, s = sin(a / 2) / l; return [x * s, y * s, z * s, cos(a / 2)]; };
 const qMul = (a, b) => [
@@ -49,11 +195,6 @@ const qFromY = (nx, ny, nz) => {
   if (ny < -0.9999) return [1, 0, 0, 0];
   const q = [nz, 0, -nx, 1 + ny]; const l = hypot(...q); return q.map((v) => v / l);
 };
-
-// world grid
-const NX = 512, NY = 80, NZ = 512, VS = 0.75, OX = -192, OY = -56, OZ = -192;
-const CELLS = 16, CELLW = 24; // culling grid over XZ
-const NCHUNK = 7; // 3 small + 3 large rock chunk meshes + pebbles
 
 // ---------------------------------------------------------------- naive surface nets
 // D: scalar field (>0 inside), dims nx,ny,nz. Returns grid-space positions + triangle indices.

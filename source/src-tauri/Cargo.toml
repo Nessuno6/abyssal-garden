@@ -1,0 +1,27 @@
+[package]
+name = "abyssal-garden"
+version = "2.1.0"
+description = "Abyssal Garden: an endless procedural underwater world (WebGPU in WebView2)"
+edition = "2021"
+
+[lib]
+name = "abyssal_garden_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tokio = { version = "1", features = ["net", "sync", "time", "rt", "rt-multi-thread", "macros"] }
+tokio-tungstenite = "0.24"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

@@ -2,8 +2,10 @@
 // audio: procedural underwater ambience (no sample files)
 // ============================================================================
 // A fixed Web Audio graph, built on the first click / key / touch and driven by a 10 Hz timer, not the frame loop.
-// Layers: rumble, surface wash, water rush (follows camera speed), drone, bubbles, chimes and distant whale calls.
-let AC, OUT, muted = false;
+// Layers: rumble, surface wash, water rush (follows swim speed), drone, bubbles, chimes and distant whale calls.
+// The biome under the camera (BIO, filled by main.js) colours the mix: grottos ring with more chimes, trenches
+// rumble deeper, open plains carry the whales further.
+let AC, OUT, muted = !!SAVE.muted, tick = null;
 const VOL = 0.78; // master level: about -18.5 LUFS, peaks near -5.5 dBFS
 function mkSound(ac) {
   const sr = ac.sampleRate;
@@ -21,8 +23,8 @@ function mkSound(ac) {
   const lim = N(DynamicsCompressorNode, { threshold: -6, knee: 6, ratio: 20, attack: 0.003, release: 0.3 }, ac.destination);
   const out = OUT = G(0, lim), wet = N(ConvolverNode, { buffer: ir }, out);
   const src = (playbackRate, ...to) => N(AudioBufferSourceNode, { buffer: nb, loop: true, playbackRate }, ...to);
-  // rumble
-  const rum = G(0.34, out); src(1, BQ('lowpass', 150, 0.7, rum)); lfo(0.07, 0.11, rum.gain); lfo(0.113, 0.08, rum.gain);
+  // rumble (its filter opens or closes with the biome)
+  const rum = G(0.34, out), rumF = BQ('lowpass', 150, 0.7, rum); src(1, rumF); lfo(0.07, 0.11, rum.gain); lfo(0.113, 0.08, rum.gain);
   // surface wash + water rush: the same noise played at another speed, so the loops never line up
   const wash = G(0.25, out), wave = G(1, wash), rush = G(0, out), rushF = BQ('bandpass', 300, 0.9, rush);
   src(0.63, BQ('bandpass', 420, 0.5, wave), rushF); lfo(0.09, 0.3, wave.gain); lfo(0.151, 0.25, wave.gain);
@@ -41,31 +43,35 @@ function mkSound(ac) {
   };
   const NOTES = [0, 2, 5, 7, 9, 12, 14, 17, 19]; // D major pentatonic, in semitones above A4
   let lt = ac.currentTime, tB = lt + 1.5, tC = lt + 5, tW = lt + 12, lx = F[CX], ly = F[CY], lz = F[CZ];
-  out.gain.setTargetAtTime(VOL, lt, 1);
+  out.gain.setTargetAtTime(muted ? 0 : VOL, lt, 1);
   return () => {
     const now = ac.currentTime, t = now + 0.05, dt = now - lt;
     if (dt <= 0) return;
-    let v = hypot(F[CX] - lx, F[CY] - ly, F[CZ] - lz) / dt; if (v > 60) v = 0; // ignore jumps to a viewpoint
+    // speed from the Float64 world position; a jump (biome teleport) reads as standing still
+    let v = hypot(F[CX] - lx, F[CY] - ly, F[CZ] - lz) / dt; if (v > 120) v = 0;
     lt = now; lx = F[CX]; ly = F[CY]; lz = F[CZ];
-    rush.gain.setTargetAtTime(0.5 * pow(min(v / 26, 1), 1.2), t, 0.3); rushF.frequency.setTargetAtTime(220 + v * 14, t, 0.3);
+    const kelp = BIO[0], grot = BIO[1], tren = BIO[2], plain = BIO[3];
+    rush.gain.setTargetAtTime(0.5 * pow(min(v / 26, 1), 1.2), t, 0.3); rushF.frequency.setTargetAtTime(220 + min(v, 60) * 14, t, 0.3);
     const s = clamp(1 + ly / 30, 0, 1); wash.gain.setTargetAtTime(0.25 + 0.55 * s * s, t, 0.5);
+    rumF.frequency.setTargetAtTime(150 - 70 * tren + 40 * kelp, t, 2);
     if (t > tB) { // a burst of 1-6 bubbles: short rising blips, smaller bubbles higher and shorter
       let tt = t;
       for (let n = 1 + rnd() * rnd() * 6 | 0; n--;) { const f = rr(380, 1300); play(bub, tt, f, f * rr(1.4, 2.2), 0.05 + 40 / f, rr(0.03, 0.08), 0.006); tt += rr(0.07, 0.2); }
-      tB = tt + rr(0.5, 5);
+      tB = tt + rr(0.5, 5) * (1 - 0.4 * kelp);
     }
-    if (t > tC) { const f = 440 * pow(2, NOTES[rnd() * 9 | 0] / 12); play(chime, t, f, f, 5, rr(0.02, 0.04), 0.03); tC = t + rr(2.5, 9); }
+    if (t > tC) { const f = 440 * pow(2, NOTES[rnd() * 9 | 0] / 12); play(chime, t, f, f, 5, rr(0.02, 0.04) * (1 + 0.6 * grot), 0.03); tC = t + rr(2.5, 9) * (1 - 0.55 * grot); }
     if (t > tW) { // a phrase of 2-3 slow glides
       let tt = t;
-      for (let n = 2 + rnd() * 2 | 0; n--;) { const f = rr(170, 380), d = rr(1.6, 3.2); play(whale, tt, f, f * rr(0.6, 1.7), d, 0.08, d * 0.4); tt += d * 0.8; }
-      tW = tt + rr(20, 50);
+      for (let n = 2 + rnd() * 2 | 0; n--;) { const f = rr(170, 380) * (1 - 0.25 * tren), d = rr(1.6, 3.2); play(whale, tt, f, f * rr(0.6, 1.7), d, 0.08 * (0.8 + 0.4 * plain), d * 0.4); tt += d * 0.8; }
+      tW = tt + rr(20, 50) * (1 - 0.35 * plain);
     }
   };
 }
-// called on every click / key / touch: builds the graph once and resumes it when the browser allows
+// called on every click / key / touch (and Resume): builds the graph once and resumes it when the browser allows
 function sound() {
-  if (!AC) { AC = new AudioContext({ latencyHint: 'playback' }); setInterval(mkSound(AC), 100); }
-  if (AC.state === 'suspended' && !document.hidden) AC.resume();
+  if (!AC) { AC = new AudioContext({ latencyHint: 'playback' }); tick = mkSound(AC); setInterval(tick, 100); }
+  if (AC.state === 'suspended' && !document.hidden) AC.resume().catch(() => 0);
 }
-const mute = () => { muted = !muted; OUT.gain.setTargetAtTime(muted ? 0 : VOL, AC.currentTime, 0.08); };
-document.addEventListener('visibilitychange', () => { if (AC) document.hidden ? AC.suspend() : AC.resume(); });
+const mute = () => { muted = !muted; save({ muted: muted ? 1 : 0 }); if (AC) OUT.gain.setTargetAtTime(muted ? 0 : VOL, AC.currentTime, 0.08); };
+// a hidden app (another window in front, phone locked, Android app switcher) goes silent
+document.addEventListener('visibilitychange', () => { if (AC) document.hidden ? AC.suspend() : AC.resume().catch(() => 0); });

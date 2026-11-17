@@ -3,8 +3,15 @@
 <head>
 <meta charset=utf-8>
 <title>Abyssal Garden</title>
-<meta name=viewport content="width=device-width,initial-scale=1">
+<meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name=theme-color content=#03131c>
+<meta name=description content="An endless procedural underwater world, rendered with WebGPU">
+<meta name=mobile-web-app-capable content=yes>
+<meta name=apple-mobile-web-app-capable content=yes>
+<meta name=apple-mobile-web-app-status-bar-style content=black-translucent>
+<link rel=manifest href=manifest.json>
+<link rel=icon type=image/png sizes=192x192 href=icons/icon-192.png>
+<link rel=apple-touch-icon href=icons/icon-192.png>
 <style>
 /* The class on <body> is the state of the page:
    l = loading, m = menu, g = in the scene (g p while the mouse is captured), l e = failed to start */
@@ -13,7 +20,7 @@ body {
   position: fixed; top: 0; left: 0; width: 100%; height: 100%; margin: 0; overflow: hidden;
   background: radial-gradient(#0b3a4d, #03131c 70%);
   font: 700 clamp(13px, .7vw + .9vh, 36px)/1.4 system-ui, sans-serif; color: #e8fbff;
-  -webkit-user-select: none; user-select: none;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
 }
 /* a phone held upright gets the whole page turned on its side, so the scene is always landscape */
 @media (orientation: portrait) and (pointer: coarse) {
@@ -30,9 +37,9 @@ body:not(.g) canvas { filter: blur(1vmax) brightness(.5); transform: scale(1.06)
 
 /* menu: the loading bar and the buttons share one grid cell, so nothing jumps when they swap */
 #m {
-  position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: min(2.2em, 6vmin);
+  position: absolute; inset: 0; display: grid; place-content: safe center; justify-items: center; gap: min(1.6em, 4vmin);
   padding: 1em 1em 4.5em; text-align: center; background: radial-gradient(#03131c00 30%, #03131ccc);
-  transition: opacity .5s, visibility .5s;
+  transition: opacity .5s, visibility .5s; overflow: auto;
 }
 .g #m, .m #l, .l #g { opacity: 0; visibility: hidden; }
 h1 {
@@ -41,10 +48,11 @@ h1 {
   -webkit-background-clip: text; background-clip: text; filter: drop-shadow(0 .06em .2em #000c);
 }
 p { margin: 0; }
-#a { display: grid; width: 27em; max-width: 100%; }
+#a { display: grid; width: 30em; max-width: 100%; }
 #a > * { grid-area: 1/1; transition: opacity .8s, visibility .8s; }
-#s, #w, #q, #k, #h { font-size: .8em; letter-spacing: .12em; text-transform: uppercase; }
+#s, #w, #k, #h, #t, .o { font-size: .8em; letter-spacing: .12em; text-transform: uppercase; }
 #w { margin-top: 1.2em; color: #7ff3ff; text-wrap: balance; }
+#t { font-size: .62em; letter-spacing: .06em; color: #7ff3ffaa; text-transform: none; font-weight: 600; }
 
 /* loading bar */
 #p {
@@ -68,26 +76,54 @@ button, a {
 button:hover, a:hover { transform: translateY(-.12em); filter: brightness(1.15); }
 button:active, a:active { transform: translateY(.1em); filter: brightness(.9); }
 :focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
-#g { display: grid; gap: min(1.2em, 3.5vmin); }
+[hidden] { display: none !important; }
+#g { display: grid; gap: min(.8em, 2.4vmin); }
+#r { display: flex; gap: .8em; }
 #d {
-  padding: .9em; background: linear-gradient(#9ff6ff, #19c3d6); font-size: 1.3em;
+  flex: 1; padding: .9em; background: linear-gradient(#9ff6ff, #19c3d6); font-size: 1.3em;
   box-shadow: inset 0 -.2em #0003, 0 0 2em #19c3d6b3;
 }
+#x { background: #ff8a7a; color: #2d0603; }
 
-/* GitHub and Ko-fi: always at the bottom of the menu, in their own colours */
+/* GitHub link: always at the bottom of the menu */
 #f { position: absolute; left: 0; right: 0; bottom: 1.5em; display: flex; justify-content: center; gap: 1em; font-size: .8em; }
-a + a { background: #ff5e5b; color: #fff; }
 svg { width: 1.5em; height: 1.5em; fill: currentColor; }
 
-/* dark plates under the dive button: detail level, list of controls, touch hint */
-#q, #k, #h { padding: 1em 1.6em; border-radius: .7em; background: #03131cb3; }
+/* dark plates under the dive button: detail level, world seed, list of controls, touch hint */
+.o, #k, #h { padding: 1em 1.6em; border-radius: .7em; background: #03131cb3; }
+/* menu pages: one per tab */
+.pg { display: grid; gap: min(.8em, 2.4vmin); }
+#tb button { font-size: .9em; }
+/* rows with many choices: the label on its own line */
+.o.w { flex-wrap: wrap; }
+.o.w span { flex-basis: 100%; padding: .35em 0 .1em; }
 
-/* detail level: three buttons in a row, the current one lit */
-#q { display: flex; align-items: center; gap: .4em; padding: .4em; }
-#q span { flex: 1; color: #7ff3ff; }
-#q button { flex: 1.2; padding: .7em 0; background: none; box-shadow: none; color: #e8fbff; }
-#q button:hover { background: #7ff3ff33; }
-#q .on { background: linear-gradient(#9ff6ff, #19c3d6); box-shadow: inset 0 -.2em #0003; color: #03222d; pointer-events: none; }
+/* detail level and seed: rows of buttons, the current detail lit */
+#mk[hidden] { display: none; }
+#mk { flex-wrap: wrap; }
+#mk span { flex-basis: 100%; }
+/* the class choices wrap onto two lines instead of squeezing their labels together */
+#mk button { flex: 1 0 auto; padding: .7em .7em; }
+.nt { font-size: .62em; letter-spacing: .04em; color: #7ff3ffaa; font-weight: 600; margin-top: -.4em; }
+.o { display: flex; align-items: center; gap: .4em; padding: .4em; }
+.o span { flex: 1; color: #7ff3ff; }
+.o button { flex: 1.1; min-width: 0; padding: .7em 0; background: none; box-shadow: none; color: #e8fbff; }
+.o button:hover { background: #7ff3ff33; }
+.o .on { background: linear-gradient(#9ff6ff, #19c3d6); box-shadow: inset 0 -.2em #0003; color: #03222d; pointer-events: none; }
+#nn, #na { flex: 1.6; min-width: 0; padding: .6em .5em; border: 2px solid #7ff3ff66; border-radius: .4em; background: #021016;
+  font: 700 1em/1.2 system-ui, sans-serif; color: #e8fbff; text-align: center; -webkit-user-select: text; user-select: text; }
+#ng:empty { display: none; }
+#ml { display: grid; gap: .4em; }
+#ml span { text-transform: none; letter-spacing: .02em; }
+#ng { flex-wrap: wrap; }
+#ub { color: #ffd27a; }
+/* name tags over the other divers */
+.tag { position: fixed; left: 0; top: 0; margin: 0; padding: .2em .6em; border-radius: .4em; background: #03131ccc; color: #e8fbff;
+  font: 700 .75em/1.2 system-ui, sans-serif; letter-spacing: .04em; pointer-events: none; white-space: nowrap; z-index: 2; }
+#sd {
+  flex: 1.6; min-width: 0; padding: .6em .5em; border: 2px solid #7ff3ff66; border-radius: .4em; background: #021016;
+  font: 700 1em/1.2 ui-monospace, Consolas, monospace; color: #e8fbff; text-align: center; -webkit-user-select: text; user-select: text;
+}
 
 /* list of controls: two groups, key caps right-aligned against their labels */
 #k { display: flex; justify-content: center; gap: 2em; text-align: left; }
@@ -99,22 +135,41 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
   box-shadow: inset 0 -.15em #0004; color: #03222d; text-align: center;
 }
 #h { display: none; }
-@media (pointer: coarse), (max-height: 30em) {
+@media (pointer: coarse), (max-height: 34em) {
   #k { display: none; }
 }
 @media (pointer: coarse) {
   #h { display: block; }
 }
 
-/* in the scene: a small menu button (hidden while the mouse is captured, Esc does the same) and the stats line */
+/* in the scene: a small menu button (hidden while the mouse is captured, Esc does the same) and the stats overlay */
 #o {
-  position: absolute; top: .6em; right: .6em; display: none; padding: .3em .6em; background: #03222dd9;
+  position: absolute; top: max(.6em, env(safe-area-inset-top)); right: max(.6em, env(safe-area-inset-right)); display: none; padding: .3em .6em; background: #03222dd9;
   box-shadow: inset 0 0 0 2px #7ff3ff, 0 .3em 1em #0009; font-size: 1.3em; color: #e8fbff; opacity: .8;
 }
 .g #o { display: flex; }
+#cv { position: absolute; top: max(.6em, env(safe-area-inset-top)); right: calc(max(.6em, env(safe-area-inset-right)) + 3.4em); display: none; padding: .3em .6em; background: #03222dd9;
+  box-shadow: inset 0 0 0 2px #7ff3ff, 0 .3em 1em #0009; font-size: 1.3em; color: #e8fbff; opacity: .8; }
+.g #cv { display: flex; }
+/* creative console: a button next to the view toggle (creative only), the log and the command line at the bottom left */
+#cb { position: absolute; top: max(.6em, env(safe-area-inset-top)); right: calc(max(.6em, env(safe-area-inset-right)) + 6.8em); display: none; padding: .3em .6em; background: #03222dd9;
+  box-shadow: inset 0 0 0 2px #7ff3ff, 0 .3em 1em #0009; font-size: 1.3em; color: #e8fbff; opacity: .8; }
+.cr .g #cb { display: flex; }
+#con { position: absolute; left: max(.6em, env(safe-area-inset-left)); bottom: max(.6em, env(safe-area-inset-bottom)); width: min(44em, calc(100% - 1.2em)); z-index: 3; }
+#conlog { margin: 0 0 .4em; padding: .5em .7em; max-height: 40vh; overflow: auto; border-radius: .5em; background: #021016d9; color: #cff7ff; font: 600 .78em/1.35 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+#conlog:empty { display: none; }
+#coni { width: 100%; box-sizing: border-box; padding: .6em .7em; border: 2px solid #7ff3ff88; border-radius: .5em; background: #021016ee; color: #e8fbff; font: 700 1em/1.2 ui-monospace, Consolas, monospace; -webkit-user-select: text; user-select: text; }
 .p #o { display: none; }
+/* FPS counter: top-left while diving, coloured by frame rate; tap it (touch) for the full stats */
+#fp {
+  position: absolute; top: max(.6em, env(safe-area-inset-top)); left: max(.6em, env(safe-area-inset-left)); display: none; margin: 0; padding: .25em .55em;
+  border-radius: .4em; background: #03131cb3; font: 700 .8em/1.3 ui-monospace, Consolas, monospace; color: #7dff9a; cursor: pointer;
+}
+.g #fp { display: block; }
+.g #i:not(:empty) { pointer-events: auto; } /* tap the full stats to go back to the counter */
+#fp.mid { color: #ffd54a; } #fp.low { color: #ff6b5b; } #fp.off, #fp.hud { display: none; }
 #i {
-  position: absolute; top: 1em; left: 1.2em; margin: 0; font: .8em/1.6 ui-monospace, Consolas, monospace;
+  position: absolute; top: 1em; left: max(1.2em, env(safe-area-inset-left)); margin: 0; font: .72em/1.55 ui-monospace, Consolas, monospace;
   white-space: pre-wrap; text-shadow: 0 1px 4px #000; pointer-events: none;
 }
 </style>
@@ -124,35 +179,83 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
 <div id=m>
   <h1>Abyssal Garden</h1>
   <div id=a>
-    <div id=l><div id=p><i id=b></i></div><p id=s>Diving…</p><p id=w hidden>Use Google Chrome for optimal experience</p></div>
+    <div id=l><div id=p><i id=b></i></div><p id=s>Diving…</p><p id=w hidden>Use Google Chrome or Edge for the best experience</p></div>
     <div id=g>
-      <button id=d>Dive in</button>
-      <p id=q><span>Detail</span><button>Low</button><button>Medium</button><button>High</button></p>
+      <p id=r><button id=d>Dive in</button><button id=x hidden>Quit</button></p>
+      <p id=tb class=o><button data-t=gfx>Graphics</button><button data-t=world>World</button><button data-t=models>Models</button><button data-t=net>Online</button><button data-t=keys>Controls</button></p>
+      <p id=ub class=nt hidden></p>
+      <div class=pg data-t=gfx>
+      <p id=q class=o><span>Detail</span><button data-q=auto>Auto</button><button data-q=low>Low</button><button data-q=medium>Medium</button><button data-q=high>High</button></p>
+      <p id=tf class="o w"><span>Target FPS</span><button data-f=0>Auto</button><button data-f=30>30</button><button data-f=60>60</button><button data-f=90>90</button><button data-f=120>120</button></p>
+      <p id="u" class="o w"><span>Upscaler (FSR 1)</span><button data-u=auto>Auto</button><button data-u=native>Native</button><button data-u=q>Quality</button><button data-u=b>Balanced</button><button data-u=p>Perf.</button></p>
+      <p id=sh class=o><span>Sharpening</span><button data-s=0.4>Soft</button><button data-s=0.75>Medium</button><button data-s=1>Sharp</button></p>
+      <p id=fg class=o><span>Frame generation</span><button data-g=0>Off</button><button data-g=1>On</button></p>
+      <p id=tx class=o><span>Textures</span><button data-x=auto>Auto</button><button data-x=low>Low</button><button data-x=medium>Medium</button><button data-x=high>High</button></p>
+      <p id=v class=o><span>FPS counter</span><button data-f=1>On</button><button data-f=0>Off</button><button data-f=2>Full stats</button></p>
+      <p id=gn class=nt></p>
+      </div>
+      <div class=pg data-t=world hidden>
+      <p id=e class=o><span>World seed</span><input id=sd inputmode=numeric autocomplete=off spellcheck=false aria-label="World seed"><button id=sr aria-label="Random seed">Random</button><button id=ss>Share</button><button id=sa>Apply</button></p>
+      <p id=wf class=nt></p>
+      <p id=gt class="o w"><span>Go to</span><button data-j=lev>Leviathan</button><button data-j=big>Landmark</button><button data-j=minor>Structure</button><button data-j=bio>Next biome</button></p>
+      <p id=gm class=o><span>Game mode</span><button data-m=survival>Survival</button><button data-m=creative>Creative</button></p>
+      <p id=gmn class=nt></p>
+      </div>
+      <div class=pg data-t=models hidden>
+      <p id=mo class=o><span>Models</span><button id=ma>Add models</button><button id=mx>Clear</button><input id=mf type=file multiple accept=".zip,.glb,.fbx,.obj,model/gltf-binary,application/zip" hidden></p>
+      <p id=mk class=o hidden><span id=mn>Add as</span><button data-c=auto>Auto</button><button data-c=s>Structure</button><button data-c=p>Plant</button><button data-c=c>Creature</button><button data-c=l>Leviathan</button><button data-c=m>Submarine</button><button data-c=b>Boat</button><button>Cancel</button></p>
+      <p id=mc class=nt></p>
+      <div id=ml></div>
+      </div>
+      <div class=pg data-t=net hidden>
+      <p id=nm class=o><span>Your name</span><input id=nn maxlength=16 autocomplete=off spellcheck=false aria-label="Your name"></p>
+      <p id=mp class=o><span>LAN game</span><button id=nh>Host</button><button id=ns>Find games</button><button id=nl hidden>Leave</button></p>
+      <p id=ng class=o></p>
+      <p id=nj class=o><span>Join by address</span><input id=na inputmode=decimal autocomplete=off spellcheck=false placeholder=192.168.1.20 aria-label="Host address"><button id=nb>Join</button></p>
+      <p id=nst class=nt></p>
+      <p id=nlog class=nt></p>
+      <p id=up class=o><span>Updates</span><button id=uc>Check now</button><button data-a=1>Auto</button><button data-a=0>Manual</button></p>
+      <p id=udr class=o hidden><button id=ud></button></p>
+      <p id=ust class=nt></p>
+      </div>
+      <div class=pg data-t=keys hidden>
       <div id=k>
         <p>
           <i><b>W</b><b>A</b><b>S</b><b>D</b></i>Swim
           <i><b>Q</b><b>E</b></i>Down / up
           <i><b>Shift</b></i>Faster
-          <i><b>1</b>–<b>6</b></i>Viewpoints
+          <i><b>Ctrl</b></i>Cruise
         </p>
         <p>
+          <i><b>1</b>–<b>7</b></i>Jump to a biome
+          <i><b>8</b><b>9</b></i>Next landmark / structure
+          <i><b>0</b></i>Find a leviathan
           <i><b>Esc</b></i>Menu
-          <i><b>M</b></i>Mute
-          <i><b>H</b></i>Stats
+          <i><b>M</b><b>H</b><b>F11</b></i>Mute · stats · full
         </p>
       </div>
       <p id=h>Hold to swim forward · slide to steer · second finger to go faster</p>
+      </div>
+      <p id=t></p>
     </div>
   </div>
   <p id=f>
-    <a href=https://github.com/Noniv/abyssal-garden target=_blank><svg viewBox="0 0 16 16"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>GitHub</a>
-    <a href=https://ko-fi.com/noniv target=_blank><svg viewBox="0 0 24 24"><path fill-rule=evenodd d="M2 5h16.5a4.5 4.5 0 0 1 0 9H17a6 6 0 0 1-6 5H8a6 6 0 0 1-6-6zM17 8v3h1.5a1.5 1.5 0 0 0 0-3zM9.5 15.5 5.9 12a2.2 2.2 0 0 1 3.6-2.5 2.2 2.2 0 0 1 3.6 2.5z"/></svg>Support</a>
+    <a href=https://github.com/Noniv/abyssal-garden target=_blank rel=noopener><svg viewBox="0 0 16 16"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>GitHub</a>
   </p>
 </div>
 <button id=o aria-label=Menu>≡</button>
+<button id=cv aria-label="First / third person">◐</button>
+<button id=cb aria-label="Console">⌨</button>
+<div id=con hidden><pre id=conlog></pre><input id=coni autocomplete=off spellcheck=false placeholder="/help" aria-label="Console command"></div>
 <pre id=i></pre>
+<p id=fp aria-label="Frame rate"></p>
 <script>
 /*SCRIPT*/
+</script>
+<script>
+// offline: cache-first service worker (served over https or localhost; not needed inside Tauri or from file://)
+if ('serviceWorker' in navigator && !window.__TAURI__ && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1'))
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch((e) => console.warn('service worker:', e)));
 </script>
 </body>
 </html>

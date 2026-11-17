@@ -1,14 +1,16 @@
 {
   "name": "abyssal-garden",
   "private": true,
-  "description": "A procedural underwater world rendered with WebGPU, bundled into one HTML file",
+  "description": "An endless procedural underwater world rendered with WebGPU, packaged for Windows (Tauri v2) and Android (TWA)",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
     "build:readable": "node build.mjs --readable",
-    "build:dev": "node build.mjs --dev"
+    "serve": "node serve.mjs",
+    "tauri": "tauri"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "@tauri-apps/cli": "^2.9.0"
   }
 }

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The page may close its own window (menu Quit), toggle fullscreen (F11) and open links (update downloads) in the system browser. The LAN commands are app commands (lan.rs).",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:window:allow-close", "core:window:allow-set-fullscreen", "opener:default"]
+}
