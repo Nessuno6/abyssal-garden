@@ -78,6 +78,7 @@ function conRun(line) {
     case 'help': return ['/spawn <model | leviathan | school | manta | turtle | jelly | squid> [count]: in front of you',
       '/kill: remove what /spawn added', '/attack: the nearest imported leviathan lunges at you', '/roar, /hunt: its roar, or start hunting',
       '/anim <clip>: the nearest animated model plays that clip', '/tp <x> <z> [y] | /tp leviathan | landmark | structure | biome',
+      '/sub: park your submarine in front of you; /hull <0-100>, /power <0-100>',
       '/mode survival | creative', '/list: loaded models and their clips', '/import <url> [class | auto]: add a model from a URL',
       '/clear: empty this log'].join('\n');
     case 'spawn': case 'summon': return cmdSpawn(a[0], +a[1]);
@@ -99,6 +100,9 @@ function conRun(line) {
     case 'mode': if (a[0] === 'survival' || a[0] === 'creative') { setMode(a[0]); if (a[0] === 'survival') conShow(false); return 'mode ' + a[0]; } return 'mode survival | creative';
     case 'list': return CUSTOM.slice(0, ACTIVE_IDS.length).map((m) => `${m.name} (${MODEL_CLASSES[m.cls]})${m.skin ? ': ' + m.skin.anims.map((x) => x.name).join(', ') : ''}`).join('\n') || 'no models loaded';
     case 'clear': $('conlog').textContent = ''; return '';
+    case 'sub': if (SUBM.m < 0) return 'no submarine: import a submarine model (and its _interior)'; if (SUBM.mode !== 'out') return 'leave it first'; subPark(25); return 'your submarine is parked 25 m ahead';
+    case 'hull': if (SUBM.m < 0) return 'no submarine'; SUBM.hull = clamp(+a[0] || 0, 0, 100); return `hull ${SUBM.hull} %`;
+    case 'power': if (SUBM.m < 0) return 'no submarine'; SUBM.power = clamp(+a[0] || 0, 0, 100); return `power ${SUBM.power} %`;
     case 'import': {
       const url = w[1]; if (!url) return 'import <url> [structure | plant | creature | leviathan | submarine | boat | auto]';
       const want = { structure: 's', plant: 'p', creature: 'c', leviathan: 'l', submarine: 'm', boat: 'b' }[a[1]] || 'auto';

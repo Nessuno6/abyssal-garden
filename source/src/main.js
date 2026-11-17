@@ -54,8 +54,8 @@ const tCX = tex(CM + 1, CM + 1, 'rgba8unorm', TU.STORAGE_BINDING | TU.TEXTURE_BI
 const arrView = (t) => t.createView({ dimension: '2d-array' });
 
 // uniforms (layouts in shaders.js)
-const UB = new Float32Array(72), UBS = new Float32Array(72);
-const ubo = ebuf(288, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(288, BU.UNIFORM | BU.COPY_DST);
+const UB = new Float32Array(76), UBS = new Float32Array(76); // G: 19 vec4 (the last: the sonar pulse)
+const ubo = ebuf(304, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(304, BU.UNIFORM | BU.COPY_DST);
 const WTU = new Float32Array(4), uboW = ebuf(16, BU.UNIFORM | BU.COPY_DST);
 const LVD = new Float32Array(32), lvBuf = ebuf(128, BU.UNIFORM | BU.COPY_DST);
 const wtBuf = ebuf(1088, BU.UNIFORM | BU.COPY_DST);
@@ -221,15 +221,24 @@ try {
     recs = SAVE.netModels.map((h) => own.find((r) => modelId(r) === h) || (shared.find((x) => x.h === h) || {}).rec).filter(Boolean);
   }
   if (recs.length) await say('Loading your models…', 0.28, 800);
+  // submarine interiors last: each uses its hull's normalisation (same frame, so it sits inside the hull)
+  recs = [...recs.filter((r) => r.cls !== 'i'), ...recs.filter((r) => r.cls === 'i')];
   for (const rec of recs) {
     try {
-      CUSTOM.push(finishModel(await parseModelRecord(rec, TX.model), rec.cls || 's', rec.name));
+      let ref = null;
+      if (rec.cls === 'i') {
+        const base = rec.name.toLowerCase().replace(/_?interior$/, ''), hull = CUSTOM.find((c) => c.cls === 'm' && c.name.toLowerCase() === base);
+        if (!hull) { console.warn('interior without its submarine', rec.name); continue; }
+        ref = hull.norm;
+      }
+      CUSTOM.push(finishModel(await parseModelRecord(rec, TX.model), rec.cls || 's', rec.name, ref));
       ACTIVE_IDS.push(modelId(rec)); // only the models that loaded: the list must match CUSTOM
     } catch (err) { console.warn('model', rec.name, err); }
   }
 } catch (err) { console.warn('models unavailable', err); }
 const STRUCTS = [], PLANTS = [], CRE = [];
-CUSTOM.forEach((m, i) => (m.cls === 'p' ? PLANTS : MOVERS.includes(m.cls) ? CRE : STRUCTS).push(i));
+// submarines are not spawned in the world (each player has one: sub.js) and interiors only show inside them
+CUSTOM.forEach((m, i) => { if (m.cls === 'm' || m.cls === 'i') return; (m.cls === 'p' ? PLANTS : MOVERS.includes(m.cls) ? CRE : STRUCTS).push(i); });
 // slots for the movers: 6 per creature model (two animals each), 1 per leviathan, 2 per submarine, 2 per boat
 {
   let n = 0;
@@ -311,8 +320,8 @@ const MODELS = CUSTOM.map((m) => {
       Q.submit([e.finish()]);
     }
     const c = gr.img ? gr.color : gr.color.map((v, i) => (i < 3 ? v * m.tint[i] : v));
-    const ub = buf(new Float32Array([c[0], c[1], c[2], gr.cut]), BU.UNIFORM);
-    return { first: gr.first, count: gr.count, bg: device.createBindGroup({ layout: bglT, entries: [{ binding: 0, resource: t.createView() }, { binding: 1, resource: { buffer: ub } }] }) };
+    const e = gr.emi || [0, 0, 0], ub = buf(new Float32Array([c[0], c[1], c[2], gr.cut, e[0], e[1], e[2], 0]), BU.UNIFORM);
+    return { first: gr.first, count: gr.count, glass: /glass|canopy|window|windshield/i.test(gr.mat || ''), bg: device.createBindGroup({ layout: bglT, entries: [{ binding: 0, resource: t.createView() }, { binding: 1, resource: { buffer: ub } }] }) };
   });
   return { vb: buf(new Uint8Array(m.vb), BU.VERTEX), ib: buf(m.ib, BU.INDEX), sb: m.skin ? buf(m.skin.sk, BU.VERTEX) : null, groups, n0: 0, n: 0, pb: 0 };
 });
@@ -342,7 +351,7 @@ function ciPut(m, x, y, z, sc, qx, qy, qz, qw, cls, seed, ph, sp, pose = -2, tin
   CI[o + 13] = tint ? tint[0] : 0; CI[o + 14] = tint ? tint[1] : 0; CI[o + 15] = tint ? tint[2] : 0;
   // collision: a capsule along the mover's length (movers travel along +z; boats sit on their keel line)
   const C = CUSTOM[m];
-  if (MOVERS.includes(C.cls) && C.cls.length === 1 && sc > 0.05) {
+  if (MOVERS.includes(C.cls) && C.cls.length === 1 && sc > 0.05 && !subNoCol) {
     const hb = C.hb, r = max(hb[0], hb[1]) * sc * 0.8, hl = max(hb[2] * sc - r, 0), dx = F[CX] - x, dz = F[CZ] - z;
     if (dx * dx + dz * dz < (hb[2] * sc + 40) ** 2) {
       const fx = 2 * (qx * qz + qw * qy), fy = 2 * (qy * qz - qw * qx), fz = 1 - 2 * (qx * qx + qy * qy), yc = y + (C.cls === 'b' ? hb[1] * sc : 0);
@@ -351,9 +360,10 @@ function ciPut(m, x, y, z, sc, qx, qy, qz, qw, cls, seed, ph, sp, pose = -2, tin
   }
 }
 function ciEmit() {
+  subEmit();
   if (PLAYER >= 0) {
-    if (THIRD) avatarPut(TPP[0], TPP[1], TPP[2], F[YAW], F[PIT], ME.spd, ME.t, nameHue(SAVE.nick || ''));
-    for (const [, P] of NET.peers) avatarPut(P.x, P.y, P.z, P.yaw, P.pit, P.spd || 0, P.at || 0, P.L.seed);
+    if (THIRD && SUBM.mode === 'out') avatarPut(TPP[0], TPP[1], TPP[2], F[YAW], F[PIT], ME.spd, ME.t, nameHue(SAVE.nick || ''));
+    for (const [, P] of NET.peers) if (!P.ride) avatarPut(P.x, P.y, P.z, P.yaw, P.pit, P.spd || 0, P.at || 0, P.L.seed);
   }
   for (let i = 0; i < nTmp; i++) { const L = LMTMP[i]; if (L.k === 13) ciPut(L.cm, L.x, L.y, L.z, L.sc, L.q[0], L.q[1], L.q[2], L.q[3], 0, L.seed, 0, 0); }
   if (PLANTS.length) {
@@ -395,7 +405,7 @@ function ciEmit() {
 // ---------------------------------------------------------------- animated movers: clips follow behaviour
 // Per mover instance (slot * 2 + j): the playing clip and its clock, one-shot clips (attack, roar) with cooldowns,
 // and a lunge (direction, weight) during an attack. Clips are looked up by name; a model without one keeps its default.
-const MV = { clip: new Int16Array(NCUS * 2).fill(-1), t: new Float64Array(NCUS * 2), once: new Uint8Array(NCUS * 2), cd: new Float64Array(NCUS * 2),
+const MV = { hit: new Uint8Array(NCUS * 2), clip: new Int16Array(NCUS * 2).fill(-1), t: new Float64Array(NCUS * 2), once: new Uint8Array(NCUS * 2), cd: new Float64Array(NCUS * 2),
   roar: new Float64Array(NCUS * 2), yaw: new Float64Array(NCUS * 2), lv: new Float64Array(NCUS * 6), lw: new Float64Array(NCUS * 2) };
 let FDT = 0.016; // this frame's step (frame() sets it)
 const clipOf = (m, name) => { const S = CUSTOM[m].skin; if (!S) return -1; const c = S.byName || (S.byName = {}); if (!(name in c)) c[name] = S.anims.findIndex((a) => a.name.toLowerCase() === name); return c[name]; };
@@ -405,7 +415,7 @@ function moverPose(ix, m, k, yaw, spd, g, x, y, z) {
   MV.cd[ix] -= dt; MV.roar[ix] -= dt;
   const play = (name, once) => { const c = clipOf(m, name); if (c < 0 || (MV.once[ix] && c !== MV.clip[ix])) return false; if (c !== MV.clip[ix]) { MV.clip[ix] = c; MV.t[ix] = 0; MV.once[ix] = once ? 1 : 0; } return true; };
   // a one-shot clip runs to its end first
-  if (MV.once[ix]) { const A = S.anims[MV.clip[ix]]; if (!A || MV.t[ix] >= A.dur) { MV.once[ix] = 0; MV.lw[ix] = 0; } }
+  if (MV.once[ix]) { const A = S.anims[MV.clip[ix]]; if (!A || MV.t[ix] >= A.dur) { MV.once[ix] = 0; MV.lw[ix] = 0; MV.hit[ix] = 0; } }
   if (k === 1) {
     // leviathan: lunges at the diver when its head comes close while stalking, roars now and then, bites when hunting
     const dPl = CREATIVE ? 1e9 : hypot(F[CX] - x, F[CY] - y, F[CZ] - z), st = BST[g];
@@ -419,6 +429,8 @@ function moverPose(ix, m, k, yaw, spd, g, x, y, z) {
     else play(st === 3 ? 'fast' : 'swim', false) || play('swim', false);
     // lunge weight: back during the first quarter of the attack, out to full reach in the middle, home at the end
     if (MV.once[ix] && MV.clip[ix] === clipOf(m, 'attack')) { const u = MV.t[ix] / S.anims[MV.clip[ix]].dur; MV.lw[ix] = u < 0.25 ? -0.15 * sin(u * 4 * PI) : sin((u - 0.25) / 0.75 * PI); }
+    // the bite lands on your submarine if the lunge reaches it
+    if (MV.lw[ix] > 0.5) { const o = ix * 3, w = MV.lw[ix]; subBite(ix, x + MV.lv[o] * w, y + MV.lv[o + 1] * w, z + MV.lv[o + 2] * w); }
   } else if (k === 0) {
     // creature: a quick turn then fast when fleeing a leviathan or the diver, idle when hovering by the diver
     const dPl = CREATIVE ? 1e9 : hypot(F[CX] - x, F[CZ] - z);
@@ -458,7 +470,7 @@ function drawCustom(r, pPlain, pSkin) {
     if (!M.n) continue;
     if (M.sb) { r.setPipeline(pSkin); r.setBindGroup(3, bgJ); r.setVertexBuffer(2, M.sb); } else r.setPipeline(pPlain);
     r.setVertexBuffer(0, M.vb); r.setVertexBuffer(1, ciBuf, M.n0 * 64); r.setIndexBuffer(M.ib, 'uint32');
-    for (const gr of M.groups) { r.setBindGroup(2, gr.bg); r.drawIndexed(gr.count, M.n, gr.first, 0, 0); }
+    for (const gr of M.groups) { if (M.noGlass && gr.glass) continue; r.setBindGroup(2, gr.bg); r.drawIndexed(gr.count, M.n, gr.first, 0, 0); }
   }
 }
 
@@ -694,7 +706,7 @@ function render() {
   m[44] = fx; m[45] = fy; m[46] = fz; m[47] = NEAR;
   m[51] = F[ZONE];
   let ek = (-cy - 8) / 26; ek = ek < 0 ? 0 : ek > 1 ? 1 : ek;
-  m[56] = EXPO * (0.6 + 0.4 * ek) * (1 + 0.9 * sstep(60, 260, -cy)); m[57] = RAYS; m[58] = det; m[59] = CREATIVE ? 1 : 0; // the eye adapts in the deep; mis.w: creative
+  m[56] = EXPO * (0.6 + 0.4 * ek) * (1 + 0.9 * sstep(60, 260, -cy)); m[57] = RAYS; m[58] = det; m[59] = CREATIVE ? 1 : 0; subUniforms(m); // the eye adapts in the deep; mis.w: creative; fog.zw: sub lights, cabin
   const cx = F[CX], cz = F[CZ];
   m[60] = cx - floor(cx / 1024) * 1024; m[61] = cz - floor(cz / 1024) * 1024; m[62] = cx - floor(cx / 44) * 44; m[63] = cz - floor(cz / 44) * 44;
   m[64] = TQ.fogFar; m[65] = FOGS;
@@ -702,7 +714,7 @@ function render() {
   let wr = 0, wg = 0, wb = 0, wm = 0, ws = 0;
   for (let i = 0; i < 7; i++) { const w = BIO[i], o = i * 4; wr += w * WATER_C[o]; wg += w * WATER_C[o + 1]; wb += w * WATER_C[o + 2]; wm += w * WATER_C[o + 3]; ws += w; }
   ws = ws || 1; m[68] = wr / ws; m[69] = wg / ws; m[70] = wb / ws; m[71] = wm / ws;
-  for (let i = 32; i < 72; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
+  for (let i = 32; i < 76; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
   // frustum planes in render space, from the rows of the view-projection (reversed, infinite depth: no far plane)
   for (let p = 0; p < 5; p++) {
     const a = p >> 1, sg = p & 1 ? -1 : 1, o = p * 4;
@@ -886,6 +898,7 @@ function frame(now) {
     const ax = lkx * kq, ay = lky * kq; lkx -= ax; lky -= ay; l2x += ax; l2y += ay;
     const dyw = l2x * kq, dpt = l2y * kq; l2x -= dyw; l2y -= dpt;
     const yaw = F[YAW] + dyw; let pitch = F[PIT] - dpt; pitch = pitch < -1.55 ? -1.55 : pitch > 1.55 ? 1.55 : pitch;
+    if (SUBM.mode !== 'out') { F[YAW] = yaw; F[PIT] = pitch; subStep(dt); updateLandmarks(); } else { // aboard a submarine: sub.js moves you
     const sp = kt ? 90 : ks || tN > 1 ? 26 : 7, k = 1 - exp(-dt * 4.5), mf = tId >= 0 ? 0.7 : kf - kb, mr = kr - kl, mu = ku - kd, cp = cos(pitch), sy = sin(yaw), cw = cos(yaw);
     const vx = F[VX] + ((sy * cp * mf + cw * mr) * sp - F[VX]) * k, vy = F[VY] + ((sin(pitch) * mf + mu) * sp - F[VY]) * k, vz = F[VZ] + ((-cw * cp * mf + sy * mr) * sp - F[VZ]) * k;
     let x = F[CX] + vx * dt, y = F[CY] + vy * dt, z = F[CZ] + vz * dt;
@@ -895,6 +908,7 @@ function frame(now) {
     F[MX] = x - F[CX]; F[MY] = y - F[CY]; F[MZ] = z - F[CZ];
     nDyn = nDynMov; levColliders(); netColliders(); // creatures, leviathans and other divers block the way too
     collide();
+    }
   }
   // biome under the camera (smoothed): fog / light colour and the soundscape follow it
   bioAt(F[CX], F[CZ]);
@@ -903,7 +917,7 @@ function frame(now) {
   F[ZONE] = BIO[1] * BIO[1] * (3 - 2 * BIO[1]);
   FDT = dt;
   // third person: the scene renders from behind and above the diver (F[C*] is the eye until thirdOut)
-  const tp = THIRD && PLAYER >= 0;
+  const tp = THIRD && PLAYER >= 0 && SUBM.mode === 'out';
   if (tp) thirdIn(dt);
   // frame generation: rendered and generated frames alternate
   // (a jump of more than 20 m renders twice in a row: there is nothing to reproject)
@@ -911,7 +925,7 @@ function frame(now) {
   else { updateLife(dt); netAfterLife(); stream(); render(); genNext = FG; }
   netTags();
   if (tp) thirdOut();
-  playerAnim(dt);
+  playerAnim(dt); subAfter(dt);
   netTick(now, dt);
   // small counter: frames per second over half-second windows, the slowest frame, GPU time when timestamps exist
   fpN++; fpT += dtr; if (dtr > fpW) fpW = dtr;
@@ -1048,6 +1062,9 @@ const key = (e, v) => {
     case 'KeyE': case 'Space': ku = v; break; case 'KeyQ': case 'KeyC': kd = v; break; case 'ShiftLeft': case 'ShiftRight': ks = v; break;
     case 'ControlLeft': case 'ControlRight': kt = v; break;
     case 'KeyV': if (v && !e.repeat) toggleView(); break;
+    case 'KeyF': if (!e.repeat) subUse(!!v); break;
+    case 'KeyL': if (v && !e.repeat && SUBM.mode !== 'out') subLights(); break;
+    case 'KeyR': if (v && !e.repeat && SUBM.mode !== 'out') subPing(); break;
     default: if (v && !e.repeat) {
       if ((e.code === 'KeyT' || e.code === 'Slash') && CREATIVE) { e.preventDefault(); conShow(true); }
       else if (e.code === 'KeyH') setFps(hud ? 1 : 2);
@@ -1120,12 +1137,13 @@ $('cv').onclick = (e) => { e.currentTarget.blur(); toggleView(); };
 for (const id of ['o', 'cv']) { $(id).tabIndex = -1; $(id).addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); }); }
 // Go to (World tab): the jump keys as buttons, for touch screens; jumps, then dives in
 let bioTurn = 0;
-$('gt').querySelectorAll('button').forEach((b) => { b.onclick = () => { const j = b.dataset.j; if (j === 'lev') toLeviathan(); else if (j === 'big') jump(7); else if (j === 'minor') jump(8); else jump(bioTurn++ % 7); go(); }; });
+$('gt').querySelectorAll('button').forEach((b) => { b.onclick = () => { const j = b.dataset.j; if (j === 'lev') toLeviathan(); else if (j === 'sub') { if (SUBM.m < 0) return; const p = subW(SUBM, mark('hatch')); place(p[0] + 3, p[2] + 3, SUBM.x, SUBM.z, 0); F[CY] = clamp(p[1] + 2, hAt(F[CX], F[CZ]) + 2, -1.2); jumpName = 'your submarine'; } else if (j === 'big') jump(7); else if (j === 'minor') jump(8); else jump(bioTurn++ % 7); go(); }; });
 // game mode (World tab): survival, or creative where creatures do not notice you; applied at once
 function setMode(m) { CREATIVE = m === 'creative'; document.documentElement.classList.toggle('cr', CREATIVE); if (!CREATIVE && conOpen) conShow(false); save({ mode: m }); $('gm').querySelectorAll('button').forEach((b) => { b.className = b.dataset.m === m ? 'on' : ''; }); $('gmn').textContent = CREATIVE ? 'Creative: you are invisible to the creatures (nothing stalks, flees from or comes to look at you).' : 'Survival: creatures notice you: leviathans stalk and lunge, shy creatures flee, curious ones come closer.'; }
 $('gm').querySelectorAll('button').forEach((b) => { b.onclick = () => setMode(b.dataset.m); });
 setMode(CREATIVE ? 'creative' : 'survival');
 conInit(); // creative console (console.js)
+subInit2(); // submarine buttons (sub.js)
 // pointer lock lost (Esc, Alt+Tab, the window losing focus inside the Tauri / WebView2 frame): open the menu
 document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && !menu && !conOpen) ui(true); else if (!menu) body.className = document.pointerLockElement ? 'g p' : 'g'; });
 document.addEventListener('pointerlockerror', () => { if (!menu) body.className = 'g'; });
@@ -1226,6 +1244,7 @@ async function fileToRec(f) {
 // Auto class: from the animation clips and the name (animated models made for this game use these clip names)
 function guessClass(it) {
   const a = it.anims.join(' ').toLowerCase(), n = it.rec.name.toLowerCase();
+  if (/interior/.test(n)) return 'i'; // "<submarine>_interior": the inside of that submarine
   if (/attack|roar/.test(a) || /leviathan|reaper|serpent|dragon/.test(n)) return 'l';
   if (/cruise/.test(a) || /sub(marine)?\b|hydra|cyclops|seamoth|rov/.test(n)) return 'm';
   if (/boat|ship|yacht|raft|kayak/.test(n)) return 'b';
@@ -1263,12 +1282,42 @@ $('mk').querySelectorAll('button').forEach((b) => b.onclick = async () => {
     save({ showModel: pending.length === 1 && (b.dataset.c === 's' || (b.dataset.c === 'auto' && guessClass(pending[0]) === 's')) ? 1 : 0 }); location.reload();
   } catch (err) { $('mc').textContent = 'Could not save: ' + err.message; }
 });
+// Library: the models repository (github.com/Nessuno6/abyssal-garden-models). Lists manifest.json; Add downloads the
+// .glb from GitHub and saves it with the class the manifest gives. Credits and licences are shown with each model.
+const LIB = 'https://raw.githubusercontent.com/Nessuno6/abyssal-garden-models/main/';
+const LIBCLS = { s: 'Structure', p: 'Plant', c: 'Creature', l: 'Leviathan', m: 'Submarine', b: 'Boat', i: 'Sub interior' };
+$('libb').onclick = async () => {
+  const box = $('libl'); box.textContent = ''; $('mc').textContent = 'Reading the model library…';
+  try {
+    const j = await (await fetch(LIB + 'manifest.json', { cache: 'no-store' })).json();
+    const have = new Set(CUSTOM.slice(0, ACTIVE_IDS.length).map((c) => c.name));
+    const list = (j.models || []).filter((x) => LIBCLS[x.class]);
+    $('mc').textContent = `${list.length} models in the library. Each keeps its own licence: credit the author when you share them.`;
+    for (const x of list) {
+      const row = document.createElement('p'), lab = document.createElement('span'), b = document.createElement('button');
+      row.className = 'o'; lab.textContent = `${x.title} · ${LIBCLS[x.class]} · ${x.author} · ${x.license}${x.clips ? ' · ' + x.clips.join(', ') : ''}`;
+      b.textContent = have.has(x.name) ? 'Added' : 'Add'; b.disabled = have.has(x.name);
+      b.onclick = async () => {
+        if (ACTIVE_IDS.length >= 8) { $('mc').textContent = 'Already 8 models: remove one first'; return; }
+        b.disabled = true;
+        try {
+          $('mc').textContent = `Downloading ${x.title}…`;
+          const r = await fetch(LIB + x.file); if (!r.ok) throw new Error('HTTP ' + r.status);
+          const rec = await fileToRec(new File([await r.arrayBuffer()], x.name + '.glb'));
+          await idbDo('readwrite', (st) => st.put({ ...rec, cls: x.class, credit: `${x.title} by ${x.author} (${x.license}), ${x.source}` }));
+          location.reload();
+        } catch (err) { b.disabled = false; $('mc').textContent = `Could not add ${x.title}: ${err.message}`; }
+      };
+      row.append(lab, b); box.appendChild(row);
+    }
+  } catch (err) { $('mc').textContent = 'Could not read the library: ' + err.message; }
+};
 $('mx').onclick = async () => { try { await idbDo('readwrite', (s) => s.clear()); } catch {} location.reload(); };
 seedIn.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') applySeed(seedIn.value); });
 // Save & quit (the apps, and an installed PWA on a computer): saves where you are, then closes the app. The spot is
 // also saved every 20 s and whenever the page goes to the background (the system may close a backgrounded app), so
 // the next dive in the same world starts there.
-function savePos() { save({ resume: [+F[CX].toFixed(2), +F[CY].toFixed(2), +F[CZ].toFixed(2), +F[YAW].toFixed(3), +F[PIT].toFixed(3), WSEED] }); }
+function savePos() { subSave(); save({ resume: [+F[CX].toFixed(2), +F[CY].toFixed(2), +F[CZ].toFixed(2), +F[YAW].toFixed(3), +F[PIT].toFixed(3), WSEED] }); }
 setInterval(() => { if (!menu) savePos(); }, 20000);
 document.addEventListener('visibilitychange', () => { if (document.hidden) savePos(); });
 const bQuit = $('x');
@@ -1298,6 +1347,7 @@ await say('Seeding the open sea…', 0.7, 800);
   if (resume) { F[CY] = clamp(max(rs[1], hAt(p[0], p[1]) + 1.5), -490, -2); F[YAW] = rs[3]; F[PIT] = rs[4]; }
   bioAt(p[0], p[1]); for (let i = 0; i < 7; i++) BIO[i] = TB[i + 1];
   initLife(); updateLandmarks(); updateLife(0);
+  subInit(); // your submarine (sub.js), parked in front of you the first time
 }
 // populate every tile and every clipmap level before the first reveal (64 tiles per submit)
 popMax = 64;

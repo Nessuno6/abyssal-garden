@@ -457,6 +457,46 @@ After choosing a file you pick its **class**:
 
 Creatures, leviathans and vehicles are turned so their longest side faces forward (+z, the glTF convention).
 
+### Your submarine
+
+Imported **submarine** models no longer cruise the world: the first one becomes **your own sub** (one per player). It
+is parked in front of you the first time; its position, hull, power, boost and lights are saved. **Go to → My sub**
+takes you to it, and `/sub` in the creative console parks it in front of you.
+
+A model named `<submarine name>_interior` (class **Sub interior**, which Auto picks from the name) is the inside of
+that submarine. It is modelled in the hull's own frame, so it sits inside the hull. Named empties in it are the
+stations: `pilot_seat`, `hatch` (outside), `hatch_inside`, `sonar`, `lights_panel`, `power_panel`, `repair_panel`,
+`passenger_1..3` and `floor_min` / `floor_max` (the walkable floor). The Hydra's cockpit and command centre were built
+in Blender this way. Without an interior the sub still works: boarding goes straight to the pilot's seat.
+
+| | Keyboard | Touch |
+|---|---|---|
+| Board at the hatch, sit, use a panel, stand up, leave | `F` | the Use button |
+| Drive (arcade: the sub turns toward where you look) | `W` `A` `S` `D`, `E` / `Q` up / down | hold to move, slide to steer |
+| Boost (charges back like stamina) | hold `Shift` | Boost button |
+| Lights, sonar ping | `L`, `R` | Lights, Sonar buttons |
+| Pilot view / chase camera | `V` | `◐` |
+
+* **Power** drives everything. Thrust, boost, lights, sonar pings (4 % each) and repairs use it. It recharges slowly,
+  faster near the surface (above −30 m). At 0 the lights go out and the sub crawls.
+* **Hull:**
+  * a hit above 6 m/s on rock or a structure damages it, as does a leviathan's bite (22 %);
+  * below **crush depth (280 m)** it fails steadily, with a warning on the dashboard;
+  * at 0 the sub is crippled until you repair it: hold Use at the **repair panel** (it costs power).
+* **Sonar** (`R`, the Sonar button or the sonar table) is on until you switch it off, and uses power while on:
+  * the round screen shows a topographic map of the seabed around you (depth shading, 15 m contour lines), turned so
+    your heading is up, with a north marker;
+  * a sweep turns every 4 s, and each turn starts with a ping (sound, with its echo);
+  * what is within 300 m lights up as the sweep passes its bearing, with a faint echo, and then fades over about 40 s:
+    leviathans red, creatures yellow, fish schools green, other subs cyan, structures grey;
+  * in the 3D view, each ping sends a pulse out from the sub at 110 m/s. It outlines rock, creatures and structures in
+    cyan as it passes, and the outlines fade over a few seconds, so you can make out shapes in the dark.
+* **Lights:** the sub's lights work at any depth. The cabin is lit while power lasts.
+* **Creative:** no damage and no power use.
+* **LAN games:** every player has a sub (from the host's models), and you collide with the others' subs. Swim to
+  another player's hatch and press `F` to ride as a passenger. Passengers sit in a seat, can stand and walk the
+  command centre, ping the sonar and ask the pilot's sub to switch its lights.
+
 ### Game modes
 
 The **World** tab has **Survival** and **Creative**. The only difference: in creative you are invisible to the
@@ -601,6 +641,12 @@ without them it uses frame time. The target is 11.7 ms (a sustained 60 fps with 
 80 % of the display's refresh period (up to 165 Hz) on desktops. Too slow lowers pixels first, then the draw-distance
 scale, then the remaining pixels; extra headroom restores them in reverse order. The settled values are saved for the
 next visit. If loading crashes the tab or the GPU device is lost, the next launch starts one tier lower.
+
+## Model library
+
+[Nessuno6/abyssal-garden-models](https://github.com/Nessuno6/abyssal-garden-models) holds animated models for the game.
+Each keeps its own licence, listed there with credits. **Models → Library → Browse models** lists them and adds one
+in one tap (it downloads the `.glb` from GitHub). Add a submarine and then its interior.
 
 ## Credits
 

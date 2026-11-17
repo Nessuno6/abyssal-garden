@@ -476,7 +476,7 @@ const WK = array<vec3f, 10>(vec3f(1., 2., 1.), vec3f(-2., 1., .9), vec3f(3., 1.,
 
 // ---------------------------------------------------------------- shared scene code
 const S_G = /*wgsl*/`
-struct G { vp: mat4x4f, sm: mat4x4f, cam: vec4f, right: vec4f, up: vec4f, fwd: vec4f, sun: vec4f, res: vec4f, mis: vec4f, wrap: vec4f, fog: vec4f, wat: vec4f };
+struct G { vp: mat4x4f, sm: mat4x4f, cam: vec4f, right: vec4f, up: vec4f, fwd: vec4f, sun: vec4f, res: vec4f, mis: vec4f, wrap: vec4f, fog: vec4f, wat: vec4f, son: vec4f };
 const SIG = vec3f(.058, .0235, .0195);
 const KD = vec3f(.056, .0245, .0170);
 const WCOL = vec3f(.16, .58, .90);
@@ -494,7 +494,8 @@ fn kd(z: f32) -> vec3f { return mix(KD, KDZ, z); }
 fn dz(y: f32) -> f32 { let d = min(y, 0.); return select(d, -60. + (d + 60.) * .35, d < -60.); }
 // diver's lamp: a soft cone along the view, on from 70 m down (full at 150 m)
 fn lamp(p: vec3f, n: vec3f) -> vec3f {
-  let k = ss(-70., -150., g.cam.y);
+  // g.fog.z: your submarine's lights (on at any depth, brighter)
+  let k = max(ss(-70., -150., g.cam.y), g.fog.z) * (1. + 1.5 * g.fog.z);
   if (k <= 0.) { return vec3f(0.); }
   let v = g.cam.xyz - p; let d = length(v); let l = v / max(d, 1e-3);
   let cone = ss(.72, .96, dot(-l, g.fwd.xyz));
@@ -1391,6 +1392,22 @@ fn sat3(x: vec3f) -> vec3f { return clamp(x, vec3f(0.), vec3f(1.)); }
   let bl = textureSampleLevel(tB, sC, uv, 0.).rgb;
   c = mix(c, bl, .06) + bl * .03;
   c *= g.mis.x;
+  // sonar pulse (from your submarine): a ring that sweeps out at 110 m/s, outlining rock, creatures and structures in
+  // cyan as it passes; the outlines it leaves fade over a few seconds (g.son: origin in render space, age in seconds)
+  if (g.son.w >= 0. && g.son.w < 6.) {
+    let nd = vec2f(uv.x * 2. - 1., 1. - uv.y * 2.);
+    let ray = g.fwd.xyz + nd.x * g.right.w * g.right.xyz + nd.y * g.up.w * g.up.xyz;
+    let D = distance(g.cam.xyz + ray * zf, g.son.xyz); let R = g.son.w * 110.;
+    let mxp = vec2i(textureDimensions(tS)) - 1;
+    let zr = min(g.fwd.w / max(textureLoad(tDp, min(px + vec2i(1, 0), mxp), 0), 1e-6), 6e4);
+    let zu = min(g.fwd.w / max(textureLoad(tDp, min(px + vec2i(0, 1), mxp), 0), 1e-6), 6e4);
+    let edge = ss(.015, .1, (abs(zr - zf) + abs(zu - zf)) / max(zf, 1.));
+    let band = exp(-pow((D - R) / 6., 2.));
+    let seen = select(0., exp(-(g.son.w - D / 110.) * .8), D < R);
+    let geo = select(1., 0., zf > 5e4) * ss(6., 18., D) * ss(330., 280., D);
+    let glow = (band * (.5 + edge) * 1.6 + seen * (.06 + edge * 1.3)) * geo;
+    c = c * (1. - .3 * min(band + seen, 1.) * geo) + vec3f(.25, .95, 1.) * glow;
+  }
   let q = uv - .5;
   c *= 1. - dot(q, q) * .55;
   c = tmap(c);
@@ -1510,7 +1527,9 @@ fn proj(p: vec3f) -> vec3f { let z = dot(p, U[5].xyz); return vec3f(dot(p, U[3].
 // group 2: the material's base-colour texture (sRGB) and (base colour rgb, alpha cutout)
 const W_CUST = S_B + /*wgsl*/`
 @group(2) @binding(0) var tA: texture_2d<f32>;
-@group(2) @binding(1) var<uniform> mt: vec4f;
+// material: base colour + alpha cut-off, emission
+struct MT { c: vec4f, e: vec4f };
+@group(2) @binding(1) var<uniform> mt: MT;
 // skinned models: joint matrices of every pose this frame (main.js skinPose); an instance's pose starts at d.x
 @group(3) @binding(0) var<storage, read> JM: array<mat4x4f>;
 // instance: a (position, scale), b (rotation), c (class, seed, phase, speed), d (pose index or -1, tint rgb or 0)
@@ -1547,13 +1566,15 @@ fn placeC(i: CI, l: vec3f, n: vec3f) -> CO {
   let tx = textureSample(tA, sR, i.uv);
   let dist = length(i.wp - g.cam.xyz);
   let ca = caus(i.wp, dist);
-  if (mt.w > 0. && tx.a < mt.w) { discard; }
+  if (mt.c.w > 0. && tx.a < mt.c.w) { discard; }
   var n = normalize(i.n); if (!ff) { n = -n; }
   let L = g.sun.xyz; let V = normalize(g.cam.xyz - i.wp); let z = zone(i.wp);
-  let alb = tx.rgb * mt.rgb * i.tint;
+  let alb = tx.rgb * mt.c.rgb * i.tint;
   let E = sunE(i.wp.y, z) * shadow4(i.wp + n * .2);
   var c = alb * (E * sat(dot(n, L)) * (.25 + ca) + amb(i.wp, n, .9, z) * 1.15 + side(i.wp, n, .8, z) * .6);
   c += E * pow(sat(dot(n, normalize(V + L))), 32.) * .25;
+  // inside a submarine: the cabin light (g.fog.w), and every material's own glow
+  c += alb * g.fog.w + mt.e.rgb;
   return fin(fog(c, i.wp, z));
 }
 `;

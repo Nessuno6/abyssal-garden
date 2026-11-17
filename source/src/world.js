@@ -962,7 +962,7 @@ function behave(k, i, g, A, dt) {
 // finishModel() normalises the model (largest side 1, base on y = 0; movers turned to face +z along their longest side)
 // and packs the vertex buffer: f32x3 position | snorm8x4 normal | f32x2 uv = 24 bytes.
 // classes: s structure, p plant, c creature, l leviathan (creature), m submarine, b boat (vehicles)
-const MODEL_CLASSES = { s: 'structure', p: 'plant', c: 'creature', l: 'leviathan', m: 'submarine', b: 'boat' };
+const MODEL_CLASSES = { s: 'structure', p: 'plant', c: 'creature', l: 'leviathan', m: 'submarine', b: 'boat', i: 'submarine interior' };
 const MOVERS = 'clmb'; // classes that swim / sail: forward along +z, longest side turned onto z
 // texture maps that are not colour: never used as a base colour, and not kept from a zip
 const NONCOLOR = /normal|rough|metal|spec|gloss|occlu|(^|[_\s.-])ao([_\s.-]|$)|opacity|alpha|emiss|illum|height|bump|displac|mask|transmis|cavity|curvature/i;
@@ -1151,10 +1151,12 @@ function gltfDoc(J, bufs) {
     return [(1 - 2 * (y * y + z * z)) * sx, 2 * (x * y + z * w) * sx, 2 * (x * z - y * w) * sx, 0, 2 * (x * y - z * w) * sy, (1 - 2 * (x * x + z * z)) * sy, 2 * (y * z + x * w) * sy, 0,
       2 * (x * z + y * w) * sz, 2 * (y * z - x * w) * sz, (1 - 2 * (x * x + y * y)) * sz, 0, tx, ty, tz, 1];
   };
-  const P = [], N = [], UV = [], prims = [], SKJ = [], SKW = [];
+  const P = [], N = [], UV = [], prims = [], SKJ = [], SKW = [], markers = {};
   let nv = 0, skinI = -1;
   const visit = (ni, M, depth) => {
     const nd = J.nodes[ni], W0 = mul(M, trs(nd));
+    // named empties (no mesh) are markers: the game reads their positions (e.g. a submarine interior's seats and panels)
+    if (nd.mesh === undefined && nd.name) markers[nd.name] = [W0[12], W0[13], W0[14]];
     if (nd.mesh !== undefined) for (const pr of J.meshes[nd.mesh].primitives) {
       if ((pr.mode ?? 4) !== 4 || pr.attributes.POSITION === undefined) continue;
       const pos = acc(pr.attributes.POSITION), nrm = pr.attributes.NORMAL !== undefined ? acc(pr.attributes.NORMAL) : null, uv = pr.attributes.TEXCOORD_0 !== undefined ? acc(pr.attributes.TEXCOORD_0) : null;
@@ -1201,7 +1203,8 @@ function gltfDoc(J, bufs) {
     // metallic-roughness base colour, or the diffuse of the older specular-glossiness materials (common on Sketchfab)
     const m = (J.materials || [])[mi] || {}, pbr = m.pbrMetallicRoughness || {}, sg = m.extensions && m.extensions.KHR_materials_pbrSpecularGlossiness;
     const color = sg ? sg.diffuseFactor || [1, 1, 1, 1] : pbr.baseColorFactor || [1, 1, 1, 1], ti = sg ? sg.diffuseTexture && sg.diffuseTexture.index : pbr.baseColorTexture && pbr.baseColorTexture.index;
-    groups.push({ first, count: at - first, color, flat: color, cut: m.alphaMode && m.alphaMode !== 'OPAQUE' ? (m.alphaCutoff ?? 0.5) : 0, mat: m.name || '', ...texInfo(ti) });
+    const es = (m.extensions && m.extensions.KHR_materials_emissive_strength && m.extensions.KHR_materials_emissive_strength.emissiveStrength) || 1, ef = m.emissiveFactor || [0, 0, 0];
+    groups.push({ first, count: at - first, color, flat: color, cut: m.alphaMode && m.alphaMode !== 'OPAQUE' ? (m.alphaCutoff ?? 0.5) : 0, mat: m.name || '', emi: ef.map((v) => v * es), ...texInfo(ti) });
   }
   // skeleton and animations: rest TRS of every node, parents, the skin's joints and inverse bind matrices, and each
   // animation's translation / rotation / scale channels
@@ -1221,7 +1224,7 @@ function gltfDoc(J, bufs) {
     }).filter((a) => a.ch.length && a.dur > 0);
     skin = { joints: sk.joints, ibm, nodes, anims, J: new Float32Array(SKJ), W: new Float32Array(SKW) };
   }
-  return { P: new Float32Array(P), N: new Float32Array(N), UV: new Float32Array(UV), I, groups, skin };
+  return { P: new Float32Array(P), N: new Float32Array(N), UV: new Float32Array(UV), I, groups, skin, markers };
 }
 
 // ---- Wavefront OBJ (+ MTL): positions, UVs, normals, materials (Kd, d, map_Kd); polygons fanned into triangles
@@ -1285,7 +1288,8 @@ function parseOBJ(text, R) {
   }
   return { P: new Float32Array(P), N: new Float32Array(N), UV: new Float32Array(UV), I, groups, flipV: true };
 }
-function finishModel(m, cls, name) {
+// ref: another model's normalisation to use instead of this one's (a submarine interior shares its hull's frame)
+function finishModel(m, cls, name, ref = null) {
   const P = m.P, N = m.N, I = m.I, n = P.length / 3;
   // fill in missing normals (area-weighted face normals)
   const need = new Uint8Array(n); let any = false;
@@ -1297,8 +1301,9 @@ function finishModel(m, cls, name) {
   }
   let x0 = 1e30, y0 = 1e30, z0 = 1e30, x1 = -1e30, y1 = -1e30, z1 = -1e30;
   for (let i = 0; i < P.length; i += 3) { x0 = min(x0, P[i]); x1 = max(x1, P[i]); y0 = min(y0, P[i + 1]); y1 = max(y1, P[i + 1]); z0 = min(z0, P[i + 2]); z1 = max(z1, P[i + 2]); }
-  const turn = MOVERS.includes(cls) && x1 - x0 > z1 - z0; // movers travel along +z: turn the long side onto z
-  const s = 1 / (max(x1 - x0, y1 - y0, z1 - z0) || 1), cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, by = cls === 'c' || cls === 'l' || cls === 'm' ? (y0 + y1) / 2 : y0;
+  const turn = ref ? ref.turn : MOVERS.includes(cls) && x1 - x0 > z1 - z0; // movers travel along +z: turn the long side onto z
+  const s = ref ? ref.s : 1 / (max(x1 - x0, y1 - y0, z1 - z0) || 1), cx = ref ? ref.cx : (x0 + x1) / 2, cz = ref ? ref.cz : (z0 + z1) / 2;
+  const by = ref ? ref.by : cls === 'c' || cls === 'l' || cls === 'm' ? (y0 + y1) / 2 : y0;
   const vb = new ArrayBuffer(n * 24), f = new Float32Array(vb), sb = new Int8Array(vb);
   for (let i = 0; i < n; i++) {
     let x = (P[i * 3] - cx) * s, y = (P[i * 3 + 1] - by) * s, z = (P[i * 3 + 2] - cz) * s, nx = N[i * 3], ny = N[i * 3 + 1], nz = N[i * 3 + 2];
@@ -1309,7 +1314,10 @@ function finishModel(m, cls, name) {
     f[i * 6 + 4] = m.UV[i * 2]; f[i * 6 + 5] = m.UV[i * 2 + 1];
   }
   const ex = (turn ? z1 - z0 : x1 - x0) * s, ez = (turn ? x1 - x0 : z1 - z0) * s;
-  const out = { name, cls, vb, ib: I, groups: m.groups, hb: [ex / 2, (y1 - y0) * s / 2, ez / 2], tint: [0.55 + 0.4 * hash2(name.length, 7, 31), 0.55 + 0.4 * hash2(name.length, 9, 33), 0.55 + 0.4 * hash2(name.length, 11, 35)] };
+  // markers into the same normalised space as the vertices
+  const markers = {};
+  for (const k in m.markers || {}) { const p = m.markers[k]; let x = (p[0] - cx) * s, y = (p[1] - by) * s, z = (p[2] - cz) * s; if (turn) { const t = x; x = -z; z = t; } markers[k] = [x, y, z]; }
+  const out = { name, cls, vb, ib: I, groups: m.groups, markers, norm: { turn, s, cx, cz, by }, hb: [ex / 2, (y1 - y0) * s / 2, ez / 2], tint: [0.55 + 0.4 * hash2(name.length, 7, 31), 0.55 + 0.4 * hash2(name.length, 9, 33), 0.55 + 0.4 * hash2(name.length, 11, 35)] };
   if (m.skin) {
     // vertices were normalised by N (centre, scale, maybe turn); a joint matrix M then acts as N * M * N^-1
     const ST = [s, 0, 0, 0, 0, s, 0, 0, 0, 0, s, 0, -s * cx, -s * by, -s * cz, 1], R = [0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 0, 1];

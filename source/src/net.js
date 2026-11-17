@@ -79,6 +79,7 @@ function netSend(force) {
     m.s = WSEED; m.tm = +F[TIME].toFixed(3); m.lev = []; m.mm = NET.manifest || (NET.manifest = netManifest());
     for (let i = 0; i < NLEV; i++) { for (let k = 0; k < 4; k++) m.lev.push(+LEV[i * 4 + k].toFixed(2)); for (let k = 0; k < 8; k++) m.lev.push(LB.lev[i * 8 + k]); }
   }
+  subNetOut(m);
   ws.send(JSON.stringify(m));
 }
 function netMessage(s) {
@@ -86,6 +87,7 @@ function netMessage(s) {
   const id = s.slice(0, bar), body = s.slice(bar + 1);
   if (body === 'bye') { const P = NET.peers.get(id); if (P && P.tag) P.tag.remove(); NET.peers.delete(id); netDescribe(); return; }
   let m; try { m = JSON.parse(body); } catch { return; }
+  if (m && m.t === 'subcmd') return subCmd(m);
   if (m && (m.t === 'mreq' || m.t === 'mc')) return netOther(m);
   if (!m || !Array.isArray(m.p) || m.p.length < 5) return;
   let P = NET.peers.get(id);
@@ -93,7 +95,7 @@ function netMessage(s) {
     P = { x: m.p[0], y: m.p[1], z: m.p[2], yaw: m.p[3], pit: m.p[4], t: 0, tag: null, L: { k: 99, mesh: DIVER_MESH, mat: 10, sc: 1, seed: 0, rad: 2, x: 0, y: 0, z: 0, q: [0, 0, 0, 1] } };
     NET.peers.set(id, P); netDescribe();
   }
-  P.tp = m.p; P.t = performance.now(); P.n = String(m.n || 'Diver').slice(0, 16); P.L.seed = nameHue(P.n); P.host = m.t === 'w';
+  P.tp = m.p; P.t = performance.now(); subNetIn(P, m); P.n = String(m.n || 'Diver').slice(0, 16); P.L.seed = nameHue(P.n); P.host = m.t === 'w';
   if (P.host && NET.mode === 2) netFromHost(m);
 }
 function netOther(m) {
@@ -158,7 +160,7 @@ function netTick(now, dt) {
 function netColliders() {
   if (!NET.peers.size) return;
   for (const [, P] of NET.peers) {
-    if (abs(P.x - F[CX]) > 20 || abs(P.z - F[CZ]) > 20) continue;
+    if (P.ride || abs(P.x - F[CX]) > 20 || abs(P.z - F[CZ]) > 20) continue; // aboard a sub: inside its hull
     const fx = sin(P.yaw) * cos(P.pit), fy = sin(P.pit), fz = -cos(P.yaw) * cos(P.pit);
     dynAdd(P.x - fx * 0.2, P.y - 0.35 - fy * 0.2, P.z - fz * 0.2, P.x - fx * 1.4, P.y - 0.35 - fy * 1.4, P.z - fz * 1.4, 0.35);
   }
