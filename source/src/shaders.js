@@ -652,9 +652,21 @@ fn shadow9(p: vec3f) -> f32 {
   return a / 9.;
 }
 // a baked world texture at uv (tiles per metre given), with an explicit mip from the distance (usable anywhere in a shader)
+// No visible tiling: a slow noise picks, region by region, one of 8 rotated and shifted copies of the texture, blended
+// where two regions meet; a second, 4x larger copy and a large-scale brightness noise vary it further.
 fn wtex(uv: vec2f, layer: i32, tpm: f32, dist: f32) -> vec4f {
   let lod = clamp(log2(max(512. * tpm * dist * 1.1 / max(g.res.y, 1.), 1e-4)), 0., 9.);
-  return textureSampleLevel(tM, sR, uv, layer, lod);
+  let k = textureSampleLevel(tD, sR, uv * .061 + .13, 0.).a;
+  let id = k * 8.; let ii = floor(id); let f = fract(id);
+  let ra = ii * 2.39996; let rb = (ii + 1.) * 2.39996;
+  let ua = mat2x2f(cos(ra), sin(ra), -sin(ra), cos(ra)) * uv + sin(vec2f(3., 7.) * ii);
+  let ub = mat2x2f(cos(rb), sin(rb), -sin(rb), cos(rb)) * uv + sin(vec2f(3., 7.) * (ii + 1.));
+  let a = textureSampleLevel(tM, sR, ua, layer, lod); let b = textureSampleLevel(tM, sR, ub, layer, lod);
+  var c = mix(a, b, ss(.2, .8, f - .1 * dot(a.rgb - b.rgb, vec3f(1.))));
+  let big = textureSampleLevel(tM, sR, mat2x2f(.6, .8, -.8, .6) * uv * .27 + .41, layer, min(lod + 2., 9.));
+  c = mix(c, big, .3 + .25 * textureSampleLevel(tD, sR, uv * .023 + .7, 0.).b);
+  let lum = .72 + .56 * textureSampleLevel(tD, sR, uv * .011 + .29, 0.).a;
+  return vec4f(c.rgb * lum, c.a);
 }
 // triplanar version (cave walls)
 fn wtex3(p: vec3f, n: vec3f, layer: i32, tpm: f32, dist: f32) -> vec4f {
