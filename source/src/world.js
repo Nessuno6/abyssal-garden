@@ -259,7 +259,7 @@ function addLM(L, cx, cy, cz, R) {
   if (!L.k || nTmp >= MAXLM) return;
   const dh = hypot(L.x - cx, L.z - cz);
   if (dh > R + L.rad) return;
-  if (!L.cv && CVR.length && caveMouthNear(L.x, L.z, L.rad)) return; // set pieces keep clear of cave mouths
+  if (!L.cv && !L.free && CVR.length && caveMouthNear(L.x, L.z, L.rad)) return; // set pieces keep clear of cave mouths
   LMTMP[nTmp++] = L;
   if (nNear < 16 && L.k !== 12 && hypot(dh, L.y - cy) < L.rad + 4) NEARLM[nNear++] = L;
 }
@@ -272,6 +272,7 @@ function updateLandmarks() {
   for (let gz = z0; gz <= z1; gz++) for (let gx = x0; gx <= x1; gx++) { const A = minorFeatures(gx, gz); for (let i = 0; i < A.length; i++) addLM(A[i], cx, cy, cz, R2); }
   // what grows in the caves nearby
   for (const S of CVR) if (hypot(S.ox - cx, S.oz - cz) < R2 + CAVE_CELL * 0.75) for (const L of S.decor) if (abs(L.y - cy) < R2) addLM(L, cx, cy, cz, R2);
+  wpnInstances(addLM, cx, cy, cz, R2); // missiles in flight
   netAvatars(); // other divers (LAN multiplayer)
   // counting sort by mesh id, so each mesh is one instanced draw
   LMCNT.fill(0);
@@ -865,6 +866,13 @@ function meshLeviathan() {
   // tail fluke: a tall vertical blade
   const t0 = m.v(0, 0.004, -0.96, 0.96), t1 = m.v(0, 0.06, -1.05, 1), t2 = m.v(0, 0.004, -1.02, 1), t3 = m.v(0, -0.05, -1.05, 1);
   m.tri(t0, t1, t2); m.tri(t0, t2, t3);
+  return m;
+}
+// missile: a torpedo along +y, 3.2 m. aux (material 10): dark body, a band in the player's colour, a yellow nose
+// cap, a glowing tail
+function meshTorpedo() {
+  const m = meshLathe([[0, -1.62, 1], [0.16, -1.6, 1], [0.24, -1.45, 0.1], [0.28, -1.0, 0.1], [0.28, 0.2, 0.1], [0.285, 0.3, 0.7], [0.285, 0.75, 0.7], [0.27, 0.85, 0.1], [0.25, 1.25, 0.45], [0.16, 1.5, 0.45], [0.05, 1.6, 0.45], [0, 1.62, 0.45]], 12, 0, 0);
+  for (let k = 0; k < 4; k++) { const a = k * PI / 2, c = cos(a), s = sin(a); const p = m.v(c * 0.26, -1.3, s * 0.26, 0.1), q = m.v(c * 0.62, -1.55, s * 0.62, 0.1), r = m.v(c * 0.26, -0.75, s * 0.26, 0.1); m.tri(p, q, r); m.tri(r, q, p); }
   return m;
 }
 // squid: a torpedo mantle along +y with two side fins (aux 1), eight arms and two long tentacles trailing toward -y

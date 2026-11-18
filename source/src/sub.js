@@ -312,7 +312,7 @@ function subHud() {
   const T = rideT() || SUBM, own = !SUBM.ride, depth = -T.y, warn = depth > -CRUSH - 25;
   const bar = (id, v) => { $(id).style.setProperty('--v', clamp(v, 0, 100) + '%'); $(id).dataset.v = v.toFixed(0) + ' %'; };
   bar('subhull', own ? SUBM.hull : T.hull ?? 100); bar('subpow', own ? SUBM.power : 100); bar('subbst', own ? SUBM.boost : 100);
-  $('subd').textContent = `Depth ${depth.toFixed(0)} m · crush ${-CRUSH} m · ${hypot(SUBM.vx, SUBM.vy, SUBM.vz).toFixed(1)} m/s${SUBM.lights ? ' · lights' : ''}${SON.on ? ' · sonar' : ''}${own ? '' : ' · passenger'}`;
+  $('subd').textContent = `Depth ${depth.toFixed(0)} m · crush ${-CRUSH} m · ${hypot(SUBM.vx, SUBM.vy, SUBM.vz).toFixed(1)} m/s${SUBM.lights ? ' · lights' : ''}${SON.on ? ' · sonar' : ''}${own ? ` · missiles ${CREATIVE ? '∞' : wpnAmmo}` : ' · passenger'}`;
   $('subd').className = warn ? 'warn' : '';
   $('submsg').hidden = !(SUBM.msgT > 0); $('submsg').textContent = SUBM.msg;
   // sonar screen: the seabed map turned heading-up, range rings, the sweep and the contacts it has lit
@@ -377,8 +377,8 @@ function subInit2() {
   // press acts (and holds a repair), release lets go
   $('use').addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); subUse(true); });
   $('use').addEventListener('pointerup', () => subUse(false));
-  $('sbl').onclick = () => subLights(); $('sbs').onclick = () => subPing();
+  $('sbl').onclick = () => subLights(); $('sbs').onclick = () => subPing(); $('sbf').onclick = () => subFire();
   $('sbb').addEventListener('pointerdown', (e) => { e.stopPropagation(); SUBM.boostHeld = true; });
   for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) $('sbb').addEventListener(ev, () => { SUBM.boostHeld = false; });
-  for (const id of ['use', 'sbl', 'sbs', 'sbb']) $(id).tabIndex = -1;
+  for (const id of ['use', 'sbl', 'sbs', 'sbb', 'sbf']) $(id).tabIndex = -1;
 }

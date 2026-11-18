@@ -88,6 +88,7 @@ function netMessage(s) {
   if (body === 'bye') { const P = NET.peers.get(id); if (P && P.tag) P.tag.remove(); NET.peers.delete(id); netDescribe(); return; }
   let m; try { m = JSON.parse(body); } catch { return; }
   if (m && m.t === 'subcmd') return subCmd(m);
+  if (m && m.t === 'mis') return wpnNetIn(m); // another player's missile
   if (m && (m.t === 'mreq' || m.t === 'mc')) return netOther(m);
   if (!m || !Array.isArray(m.p) || m.p.length < 5) return;
   let P = NET.peers.get(id);

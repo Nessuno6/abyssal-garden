@@ -54,8 +54,8 @@ const tCX = tex(CM + 1, CM + 1, 'rgba8unorm', TU.STORAGE_BINDING | TU.TEXTURE_BI
 const arrView = (t) => t.createView({ dimension: '2d-array' });
 
 // uniforms (layouts in shaders.js)
-const UB = new Float32Array(196), UBS = new Float32Array(196); // G: 49 vec4 (sonar pulse, your sub's hull box, caves, sky)
-const ubo = ebuf(784, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(784, BU.UNIFORM | BU.COPY_DST);
+const UB = new Float32Array(200), UBS = new Float32Array(200); // G: 50 vec4 (sonar pulse, your sub's hull box, caves, sky, blast)
+const ubo = ebuf(800, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(800, BU.UNIFORM | BU.COPY_DST);
 // caves (cave.js): 3 resident systems, each with a fixed share of one vertex / index buffer and one instance record
 const CV_SLOTS = 3, CV_VCAP = 200000, CV_ICAP = 600000, cvVB = ebuf(CV_SLOTS * CV_VCAP * 16, BU.VERTEX | BU.COPY_DST), cvIB = ebuf(CV_SLOTS * CV_ICAP * 4, BU.INDEX | BU.COPY_DST);
 const CVI = new Float32Array(CV_SLOTS * 16), cvInst = ebuf(CV_SLOTS * 64, BU.VERTEX | BU.COPY_DST), CVSLOT = new Array(CV_SLOTS).fill(null);
@@ -313,6 +313,7 @@ meshes.push(meshTableCoral().build(), meshBrainCoral().build(), meshMushroom().b
 await say('Raising crystals, vents and ruins…', 0.67, 900);
 meshes.push(meshCrystal().build(), meshChimney().build(), meshRuins().build(), meshSkeleton().build(), meshLeviathan().build(), meshSquid().build());
 const DIVER_MESH = meshes.length; meshes.push(meshDiver().build()); // 33: other players (net.js)
+const TORP_MESH = meshes.length; meshes.push(meshTorpedo().build()); // 34: missiles (weapons.js)
 const KMESH = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 21, 22, 23, 27, 28];
 let nV = 0, nI = 0;
 for (const m of meshes) { m.v0 = nV; m.i0 = nI; nV += m.nv; nI += m.ib.length; }
@@ -410,7 +411,7 @@ function ciPut(m, x, y, z, sc, qx, qy, qz, qw, cls, seed, ph, sp, pose = -2, tin
 function levPut() {
   const LG = NSCH + NMAN + NJEL + NTUR;
   for (let i = 0; i < NLEV; i++) {
-    const fade = WTD[224 + i * 4 + 3]; if (!(fade > 0.01)) continue;
+    const fade = WTD[224 + i * 4 + 3] * levFade(i); if (!(fade > 0.01)) continue;
     const o = i * 8, R = LB.lev[o + 3], w = LB.lev[o + 5], len = LB.lev[o + 6], ph = LB.lev[o + 7], sg = w < 0 ? -1 : 1, a0 = F[TIME] * w + LB.lev[o + 4];
     const P = (a) => [LEV[i * 4] + R * cos(a), LEV[i * 4 + 1] + 5 * sin(0.45 * a + ph), LEV[i * 4 + 2] + R * 0.85 * sin(a)];
     const h = P(a0), t = P(a0 - sg * len / R);
@@ -792,8 +793,9 @@ function render() {
   for (let i = 0; i < 7; i++) { const w = BIO[i], o = i * 4; wr += w * WATER_C[o]; wg += w * WATER_C[o + 1]; wb += w * WATER_C[o + 2]; wm += w * WATER_C[o + 3]; ws += w; }
   ws = ws || 1; m[68] = wr / ws; m[69] = wg / ws; m[70] = wb / ws; m[71] = wm / ws;
   skyUniforms(m); // time of day and weather
+  wpnUniforms(m); // missile blasts
   caveUniforms(m);
-  for (let i = 32; i < 196; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
+  for (let i = 32; i < 200; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
   // frustum planes in render space, from the rows of the view-projection (reversed, infinite depth: no far plane)
   for (let p = 0; p < 5; p++) {
     const a = p >> 1, sg = p & 1 ? -1 : 1, o = p * 4;
@@ -1005,7 +1007,7 @@ function frame(now) {
   F[ZONE] = BIO[1] * BIO[1] * (3 - 2 * BIO[1]);
   FDT = dt;
   caveTick(TQ.tbdr ? 3 : 4); // mesh the caves nearby, a few milliseconds a frame
-  skyTick();
+  skyTick(); wpnTick(dt);
   // third person: the scene renders from behind and above the diver (F[C*] is the eye until thirdOut)
   const tp = THIRD && PLAYER >= 0 && SUBM.mode === 'out';
   if (tp) thirdIn(dt);
@@ -1167,6 +1169,7 @@ const key = (e, v) => {
     case 'KeyF': if (!e.repeat) subUse(!!v); break;
     case 'KeyL': if (v && !e.repeat && SUBM.mode !== 'out') subLights(); break;
     case 'KeyR': if (v && !e.repeat && SUBM.mode !== 'out') subPing(); break;
+    case 'KeyX': if (v && !e.repeat) subFire(); break;
     default: if (v && !e.repeat) {
       if ((e.code === 'KeyT' || e.code === 'Slash') && CREATIVE) { e.preventDefault(); conShow(true); }
       else if (e.code === 'KeyH') setFps(hud ? 1 : 2);

@@ -489,7 +489,7 @@ const WK = array<vec3f, 10>(vec3f(1., 2., 1.), vec3f(-2., 1., .9), vec3f(3., 1.,
 const S_G = /*wgsl*/`
 struct G { vp: mat4x4f, sm: mat4x4f, cam: vec4f, right: vec4f, up: vec4f, fwd: vec4f, sun: vec4f, res: vec4f, mis: vec4f, wrap: vec4f, fog: vec4f, wat: vec4f, son: vec4f, sb: vec4f, sbh: vec4f,
   cav: vec4f, cm: array<vec4f, 8>, cl: array<vec4f, 8>, cc: array<vec4f, 8>,
-  env: vec4f, sky: vec4f, sunc: vec4f };
+  env: vec4f, sky: vec4f, sunc: vec4f, exp: vec4f };
 const SIG = vec3f(.058, .0235, .0195);
 const KD = vec3f(.056, .0245, .0170);
 const WCOL = vec3f(.16, .58, .90);
@@ -572,8 +572,25 @@ fn skyC(rd: vec3f) -> vec3f {
     c = mix(c, cc * (.8 + .4 * mu), cl * .92);
   }
   // overcast: a grey veil over everything; rain darkens it
-  c = mix(c, vec3f(.55, .6, .66) * (.03 + .97 * day) * (1. - .55 * g.env.w), cv * cv * .75);
-  return c + vec3f(.8, .85, 1.) * g.sky.w * 1.5;
+  c = mix(c, vec3f(.55, .6, .66) * (.03 + .97 * day) * (1. - .45 * g.env.w), cv * cv * .72);
+  // a rainbow in sunny showers: 40-42 deg around the point opposite the sun
+  let ra = dot(rd, -S);
+  let rt = (ra - .712) / .066;
+  if (rt > 0. && rt < 1. && g.env.w > .01) {
+    let spec = clamp(.5 + .5 * cos(TAU * (rt * .85 + vec3f(0., .33, .67))), vec3f(0.), vec3f(1.));
+    c += spec * sin(rt * 3.14159) * g.env.w * ss(0., .15, S.y) * (1. - ss(.75, .95, cv)) * ss(0., .04, rd.y) * .45;
+  }
+  // lightning (g.sunc.w: the bolt's bearing; its fraction seeds the shape): a jagged bolt from the clouds to the sea
+  if (g.sunc.w >= 0. && g.sky.w > .01) {
+    let sd = fract(g.sunc.w * 1000.) * 97.;
+    var da = atan2(rd.z, rd.x) - floor(g.sunc.w * 100.) / 100.; da -= round(da / TAU) * TAU;
+    let e = rd.y;
+    let jag = (vh2(vec2f(e * 26., sd)) - .5) * .06 + (vh2(vec2f(e * 85., sd + 9.)) - .5) * .018;
+    let bolt = ss(.004, 0., abs(da - jag)) * ss(.42, .3, e) * ss(-.01, .01, e);
+    let br = ss(.003, 0., abs(da - jag - (e - .22) * .5)) * ss(.3, .22, e) * ss(.08, .14, e); // a branch
+    c += vec3f(1., .96, 1.25) * (bolt + br * .6) * g.sky.w * 14. + vec3f(.7, .75, 1.) * ss(.12, 0., abs(da)) * g.sky.w * ss(.5, .1, e) * .8;
+  }
+  return c + vec3f(.8, .85, 1.) * g.sky.w * .45;
 }
 fn lamp(p: vec3f, n: vec3f) -> vec3f {
   // g.fog.z: your submarine's lights (on at any depth, brighter)
@@ -1322,21 +1339,36 @@ struct VO { @builtin(position) cp: vec4f, @location(0) wp: vec3f };
   return o;
 }
 // the sea seen from above: sky reflected with Fresnel, the deep body colour of the local water, the sun's glitter
-fn seaTop(V: vec3f, s: vec2f, d: f32) -> vec3f {
-  let nu = normalize(vec3f(s.x * .45, 1., s.y * .45));
+fn seaTop(V: vec3f, s: vec2f, d: f32, W: vec2f) -> vec3f {
+  // raindrops: rings spreading on the water (a cell of 1.4 m each, its own phase), close by
+  var rg = 0.; var rs = vec2f(0.);
+  if (g.env.w > .01 && d < 70.) {
+    let cq = W * .7; let ci = floor(cq);
+    for (var k = 0; k < 2; k++) {
+      let cc = ci + vec2f(f32(k) * .5);
+      let h = hs(cc.x * 17.3 + cc.y * 91.1 + f32(k) * 7.);
+      let ph = fract(g.cam.w * 1.4 + h * 7.);
+      let o = cq - cc - vec2f(fract(h * 13.), fract(h * 29.)) * .6 - .2;
+      let r = length(o) - ph * .42;
+      let w = ss(.05, 0., abs(r)) * (1. - ph) * step(1. - g.env.w * .8, fract(h * 51.));
+      rg += w; rs += normalize(o + 1e-4) * w;
+    }
+    rg *= ss(70., 8., d);
+  }
+  let nu = normalize(vec3f(s.x * .45 + rs.x * .3, 1., s.y * .45 + rs.y * .3));
   let ci = sat(dot(-V, nu));
   let fr = .02 + .98 * pow(1. - ci, 5.);
   let R = reflect(V, nu);
   let refl = skyC(vec3f(R.x, abs(R.y), R.z));
   let body = (g.wat.rgb * vec3f(.05, .09, .12) * (1. + .6 * pow(sat(dot(-V, g.sky.xyz)), 2.)) + vec3f(.004, .02, .03)) * g.env.x;
-  return mix(body, refl, fr) + g.sunc.rgb * .6 * (1. - g.env.y) * (pow(sat(dot(R, g.sky.xyz)), 350.) * 30. + pow(sat(dot(R, g.sky.xyz)), 40.) * .4);
+  return mix(body, refl, fr) + vec3f(.5, .55, .6) * rg * (.15 + .85 * g.env.x) * .5 + g.sunc.rgb * .6 * (1. - g.env.y) * (pow(sat(dot(R, g.sky.xyz)), 350.) * 30. + pow(sat(dot(R, g.sky.xyz)), 40.) * .4);
 }
 @fragment fn fs(i: VO) -> @location(0) vec4f {
   let v = i.wp - g.cam.xyz; let d = length(v); let V = v / d;
   let fl = ss(260., 60., d);
   let W = WP(i.wp);
   let s = (textureSample(tW, sR, W.xz * (79. / 1024.)).ba + textureSample(tW, sR, W.zx * (218. / 1024.) + .2).ba * .7 + textureSample(tW, sR, W.xz * (28. / 1024.) + .6).ba * .8) * fl * (.5 + 1.3 * g.env.z); // rougher in bad weather
-  if (g.cam.y > 0.) { return fin(fog(seaTop(V, s, d), i.wp, 0.)); }
+  if (g.cam.y > 0.) { return fin(fog(seaTop(V, s, d, W.xz), i.wp, 0.)); }
   let n = normalize(vec3f(-s.x * .8, -1., -s.y * .8));
   let ci = sat(dot(V, -n));
   let k = 1. - 1.769 * (1. - ci * ci);
@@ -1365,7 +1397,7 @@ fn seaTop(V: vec3f, s: vec2f, d: f32) -> vec3f {
   // above the surface: sky, and past the sea quad the open sea to the horizon
   if (g.cam.y > 0.) {
     if (rd.y >= 0.) { return fin(skyC(rd)); }
-    return fin(mix(seaTop(rd, vec2f(0.), 9000.), skyC(vec3f(rd.x, .02, rd.z)) * .75, ss(-.08, 0., rd.y)));
+    return fin(mix(seaTop(rd, vec2f(0.), 9000., vec2f(0.)), skyC(vec3f(rd.x, .02, rd.z)) * .75, ss(-.08, 0., rd.y)));
   }
   let p = g.cam.xyz + rd * g.fog.x;
   return fin(fog(vec3f(0.), p, zone(p)));
@@ -1542,12 +1574,27 @@ fn sat3(x: vec3f) -> vec3f { return clamp(x, vec3f(0.), vec3f(1.)); }
     c = c * (1. - .3 * min(band + seen, 1.) * geo) + vec3f(.25, .95, 1.) * glow;
   }
   // rain above the surface: thin falling streaks, a darker, greyer view
+  // three layers: near (big, fast, slanted by the wind), middle and far (fine, slow); drops catch the light of the sky
   if (g.cam.y > 0. && g.env.w > .01) {
-    let rp = vec2f(uv.x * 150. + uv.y * 16., uv.y * 6. - g.cam.w * 8.);
-    let cid = floor(rp); let fr = fract(rp);
-    let h = hs(cid.x * 13.1 + cid.y * 71.7);
-    let streak = step(1. - .3 * g.env.w, h) * ss(.14, 0., abs(fr.x - .5 + (h - .5) * .5)) * ss(0., .3, fr.y) * ss(1., .55, fr.y);
-    c = c * (1. - .2 * g.env.w) + vec3f(.22, .25, .3) * (.25 + g.env.x) * streak * .7;
+    var rain = 0.;
+    for (var l = 0; l < 3; l++) {
+      let fl = f32(l); let sc = vec2f(55. + fl * 70., 2.5 + fl * 2.);
+      let rp = vec2f((uv.x + uv.y * (.12 + .1 * g.env.z) / (1. + fl)) * sc.x, uv.y * sc.y - g.cam.w * (5. - fl * 1.2) + fl * .37);
+      let cid = floor(rp); let fr = fract(rp);
+      let h = hs(cid.x * 13.1 + cid.y * 71.7 + fl * 5.);
+      let len = .35 + .4 * fract(h * 7.);
+      rain += step(1. - (.22 + .1 * fl) * g.env.w, h) * ss(.16, 0., abs(fr.x - .5 + (fract(h * 3.) - .5) * .6)) * ss(0., .15, fr.y) * ss(len, len * .6, fr.y) * (1. - fl * .3);
+    }
+    c = c * (1. - .1 * g.env.w) + (vec3f(.3, .34, .4) * (.3 + 1.2 * g.env.x) + g.sky.w * 2.) * rain * .55;
+  }
+  // a missile blast (g.exp: centre in render space, age): a flash and a shock ring racing out at 60 m/s
+  if (g.exp.w >= 0.) {
+    let nd2 = vec2f(uv.x * 2. - 1., 1. - uv.y * 2.);
+    let ray2 = g.fwd.xyz + nd2.x * g.right.w * g.right.xyz + nd2.y * g.up.w * g.up.xyz;
+    let Db = distance(g.cam.xyz + ray2 * min(zf, 400.), g.exp.xyz); let Rb = g.exp.w * 60.;
+    let ring = exp(-pow((Db - Rb) / 3.5, 2.)) * (1. - g.exp.w / 1.2) * ss(220., 60., Db);
+    let near = ss(260., 20., distance(g.cam.xyz, g.exp.xyz));
+    c += vec3f(1., .72, .45) * (ring * 1.4 + exp(-g.exp.w * 7.) * .5 * near);
   }
   let q = uv - .5;
   c *= 1. - dot(q, q) * .55;

@@ -393,6 +393,7 @@ function caveUniforms(m) {
     if (hypot(S.ox - cx, S.oz - cz) > CAVE_CELL + 110) continue;
     for (const L of S.lights) { const d = hypot(L.x - cx, L.y - cy, L.z - cz); if (d < 110) CVL.push([d, L]); }
   }
+  for (const L of WLIGHTS) CVL.push([hypot(L.x - cx, L.y - cy, L.z - cz) * 0.25, L]); // missiles and blasts first
   CVL.sort((a, b) => a[0] - b[0]);
   const nl = min(8, CVL.length);
   for (let i = 0; i < nl; i++) {

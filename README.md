@@ -475,6 +475,7 @@ in Blender this way. Without an interior the sub still works: boarding goes stra
 | Drive (arcade: the sub turns toward where you look) | `W` `A` `S` `D`, `E` / `Q` up / down | hold to move, slide to steer |
 | Boost (charges back like stamina) | hold `Shift` | Boost button |
 | Lights, sonar ping | `L`, `R` | Lights, Sonar buttons |
+| Fire a missile | `X` | Fire button |
 | Pilot view / chase camera | `V` | `◐` |
 
 * **Power** drives everything. Thrust, boost, lights, sonar pings (4 % each) and repairs use it. It recharges slowly,
@@ -497,6 +498,14 @@ in Blender this way. Without an interior the sub still works: boarding goes stra
 * **LAN games:** every player has a sub (from the host's models), and you collide with the others' subs. Swim to
   another player's hatch and press `F` to ride as a passenger. Passengers sit in a seat, can stand and walk the
   command centre, ping the sonar and ask the pilot's sub to switch its lights.
+
+### Missiles
+
+Piloting, press `X` (or **Fire**) to launch a missile from the sub's nose: 6 in the rack, one reloads every 5 s and
+takes 3 % power (free in creative). It homes on the leviathan or creature nearest your line of fire, trails amber
+sparks and lights the water as it goes, and explodes on rock, near its target or after 7 s: a flash, a shock ring, a
+boom and a shake. A leviathan hit flees; three hits drive it off. Too close and your own hull takes damage. In LAN
+games the others see your missiles.
 
 ### Game modes
 
@@ -665,8 +674,10 @@ The sun crosses the sky once every 24 minutes (`sky.js`), or stays at dawn, noon
 day**, `/time`). Above the surface: a blue sky with clouds by day, orange and violet at dawn and dusk, stars and the
 moon at night. Under water the light follows the refracted sun; at night only the moon, your lamp (it switches on by
 itself) and the glowing life are left. The weather (**World → Weather**, `/weather`) changes every few minutes: clear,
-cloudy, overcast, rain and storm. Clouds dim the light and soften the caustics; bad weather raises the waves and the
-murk; rain falls above the surface, and storms flash with lightning and thunder (muffled under water). Both follow
+cloudy, overcast, rain (sunny showers with a rainbow when the sun is out), storm (wind, heavy rain, big waves) and
+thunderstorm (lightning bolts every few seconds, thunder rolling in after them). Clouds dim the light and soften the
+caustics; bad weather raises the waves and the murk; above the surface rain falls in layers, drops ring the water and
+you hear it, muffled under water. Both follow
 the world clock, so everyone in a LAN game sees the same sky.
 
 ### The leviathans

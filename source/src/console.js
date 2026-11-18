@@ -79,7 +79,7 @@ function conRun(line) {
       '/kill: remove what /spawn added', '/attack: the nearest imported leviathan lunges at you', '/roar, /hunt: its roar, or start hunting',
       '/anim <clip>: the nearest animated model plays that clip', '/tp <x> <z> [y] | /tp leviathan | landmark | structure | cave | surface | biome',
       '/sub: park your submarine in front of you; /hull <0-100>, /power <0-100>',
-      '/mode survival | creative', '/time cycle | dawn | noon | dusk | night', '/weather auto | clear | cloudy | overcast | rain | storm', '/list: loaded models and their clips', '/import <url> [class | auto]: add a model from a URL',
+      '/mode survival | creative', '/time cycle | dawn | noon | dusk | night', '/weather auto | clear | cloudy | overcast | rain | storm | thunderstorm', '/list: loaded models and their clips', '/import <url> [class | auto]: add a model from a URL',
       '/clear: empty this log'].join('\n');
     case 'spawn': case 'summon': return cmdSpawn(a[0], +a[1]);
     case 'kill': { if (conBase < 0) return 'nothing spawned'; const k = LIFEN[6] - conBase; LIFEN[6] = conBase; conBase = -1; return `removed ${k}`; }
