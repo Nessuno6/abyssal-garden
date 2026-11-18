@@ -629,6 +629,7 @@ struct WT { sch: array<vec4f, 16>, man: array<vec4f, 8>, vent: array<vec4f, 16>,
 @group(0) @binding(4) var tSh: texture_depth_2d;
 @group(0) @binding(5) var tW: texture_2d<f32>;
 @group(0) @binding(6) var tD: texture_2d<f32>;
+@group(0) @binding(7) var tM: texture_2d_array<f32>; // baked world textures: 0 lava, 1 cave rock (a: height), 2 brine, 3 moss, 4 sand (a: height)
 @group(1) @binding(0) var tCH: texture_2d_array<f32>;
 @group(1) @binding(1) var tCB: texture_2d_array<f32>;
 @group(1) @binding(2) var<uniform> lv: LVU;
@@ -649,6 +650,16 @@ fn shadow9(p: vec3f) -> f32 {
   let s = shUV(p); let e = 2.1 / ${SHADOW}.; var a = 0.;
   for (var x = -1; x <= 1; x++) { for (var y = -1; y <= 1; y++) { a += textureSampleCompareLevel(tSh, sS, s.xy + vec2f(f32(x), f32(y)) * e, s.z); } }
   return a / 9.;
+}
+// a baked world texture at uv (tiles per metre given), with an explicit mip from the distance (usable anywhere in a shader)
+fn wtex(uv: vec2f, layer: i32, tpm: f32, dist: f32) -> vec4f {
+  let lod = clamp(log2(max(512. * tpm * dist * 1.1 / max(g.res.y, 1.), 1e-4)), 0., 9.);
+  return textureSampleLevel(tM, sR, uv, layer, lod);
+}
+// triplanar version (cave walls)
+fn wtex3(p: vec3f, n: vec3f, layer: i32, tpm: f32, dist: f32) -> vec4f {
+  var w = pow(abs(n), vec3f(4.)); w /= (w.x + w.y + w.z);
+  return wtex(p.zy * tpm, layer, tpm, dist) * w.x + wtex(p.xz * tpm, layer, tpm, dist) * w.y + wtex(p.xy * tpm, layer, tpm, dist) * w.z;
 }
 fn cuv(p: vec3f) -> vec2f { return WP(p).xz - g.sun.xz * (p.y / g.sun.y); }
 fn caus(p: vec3f, d: f32) -> vec3f {
@@ -799,8 +810,9 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
       let rf = i.bio2.x;
       alb = mix(alb, vec3f(.62, .58, .5) * (.7 + .4 * B.h), flt * rf * gm.y * .85);
       alb = mix(alb, vec3f(.5, .22, .32) * (.5 + .7 * B.h), rf * (1. - gm.y) * (.3 + .3 * flt));
-      // seabed: rippled sand on the flats, glowing magenta ground cover in the grottos, a violet cast in purple zones
-      alb = mix(alb, vec3f(.13, .15, .14) * (.55 + .6 * B.h), flt * gm.y * .7);
+      // seabed: rippled sand on the flats (baked: ripples, pebbles, shells), glowing magenta ground cover in the grottos
+      let sd4 = wtex(i.op.xz * .25, 4, .25, dist);
+      alb = mix(alb, mix(vec3f(.13, .15, .14) * (.55 + .6 * B.h), sd4.rgb * .42 * (.7 + .5 * sd4.a), .6), flt * gm.y * .7);
       let mg = flt * sat(gm.x * 1.5 - .45 + (B.c - .5) * 1.6) * ss(.35, .6, A.h) * ss(-16., -24., i.wp.y);
       alb = mix(alb, vec3f(.20, .02, .12) * (.4 + .9 * B.h), mg * .8);
       flu = mg * .35;
@@ -886,15 +898,21 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
     var tc = vec3f(.8, .3, 1.);
     if (th == 1) { tc = vec3f(.25, 1., .8); } else if (th == 2) { tc = vec3f(1.1, .12, .015); } else if (th == 3) { tc = vec3f(.35, 1., .3); } else if (th == 4) { tc = vec3f(.35, .5, 1.); }
     // glowing growths in patches (large-scale patterns only: the small detail textures would show their tiling)
-    let spots = ss(.76, .8, big2 * .6 + A.h * .5) * ss(.45, .75, A.c) * ss(.3, .6, hgt);
-    let moss = flt * ss(.62, .72, big * .7 + A.c * .4) * ss(.5, .7, B.h);
-    emi += tc * (spots * .55 + moss * .12) * (1. - occ) * (.8 + .2 * sin(g.cam.w * .9 + big * 30.));
-    alb *= .75;
+    // baked cave rock (strata, fractures) and baked glowing growths, tinted with the cave's colour
+    let rk = wtex3(i.op, on, 1, 1. / 6., dist);
+    alb = mix(alb, rk.rgb * vec3f(.9, .92, 1.), .8) * (.55 + .7 * rk.a);
+    let mo = wtex3(i.op * 1.0, on, 3, 1. / 5., dist).rgb;
+    emi += tc * dot(mo, vec3f(.4, .4, .3)) * 1.6 * ss(.35, .65, big2 * .6 + A.h * .5) * (1. - occ) * (.8 + .2 * sin(g.cam.w * .9 + big * 30.));
+    alb *= .8;
     bump = .6; sgro = 0.;
     if (pool) {
       // lava: crusted, flowing, bright in its cracks; brine: a soft glowing green sheet with slow ripples
       let flow = big * .6 + A.h * .5 + .08 * sin(g.cam.w * .4 + big2 * 9.);
-      if (th == 2) { alb = vec3f(.04, .015, .008); emi = vec3f(.55, .045, .004) * (.25 + 1.2 * ss(.45, .62, flow)) + vec3f(.8, .2, .02) * ss(.66, .7, flow) * .7; } // dim and red: the deep-water exposure and the tone map push bright lava to yellow
+      let lvt = wtex(i.op.xz / 18. + vec2f(g.cam.w * .004, g.cam.w * .002), 0, 1. / 18., dist).rgb;
+      let br = wtex(i.op.xz / 26. + vec2f(g.cam.w * .006, -g.cam.w * .004), 2, 1. / 26., dist).rgb;
+      if (th == 2 && true) { alb = vec3f(.03, .012, .01); emi = lvt * vec3f(1.2, .55, .35) * (.7 + .3 * sin(g.cam.w * .8 + flow * 9.)); }
+      else if (th == 3) { alb = br * .1; emi = br * vec3f(.35, .7, .45) * (.75 + .25 * sin(g.cam.w * .6 + flow * 7.)); }
+      else if (th == 2) { alb = vec3f(.04, .015, .008); emi = vec3f(.55, .045, .004) * (.25 + 1.2 * ss(.45, .62, flow)) + vec3f(.8, .2, .02) * ss(.66, .7, flow) * .7; } // dim and red: the deep-water exposure and the tone map push bright lava to yellow
       else { alb = vec3f(.02, .08, .04); emi = vec3f(.14, .7, .3) * (.45 + .35 * sin(g.cam.w * .7 + flow * 12.) * .5 + .3 * B.h); }
       bump = .15;
     }

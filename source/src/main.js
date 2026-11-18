@@ -104,7 +104,8 @@ const bgl0 = device.createBindGroupLayout({ entries: [
   { binding: 0, visibility: VF, buffer: {} },
   { binding: 1, visibility: VF, sampler: {} }, { binding: 2, visibility: VF, sampler: {} }, { binding: 3, visibility: VF, sampler: { type: 'comparison' } },
   { binding: 4, visibility: VF, texture: { sampleType: 'depth' } },
-  { binding: 5, visibility: VF, texture: {} }, { binding: 6, visibility: VF, texture: {} }] });
+  { binding: 5, visibility: VF, texture: {} }, { binding: 6, visibility: VF, texture: {} },
+  { binding: 7, visibility: VF, texture: { viewDimension: '2d-array' } }] });
 const bgl1 = device.createBindGroupLayout({ entries: [
   { binding: 0, visibility: VF, texture: { sampleType: 'unfilterable-float', viewDimension: '2d-array' } },
   { binding: 1, visibility: VF, texture: { viewDimension: '2d-array' } },
@@ -113,9 +114,36 @@ const bgl1 = device.createBindGroupLayout({ entries: [
   { binding: 4, visibility: VF, buffer: { type: 'read-only-storage' } },
   { binding: 5, visibility: VF, buffer: {} },
   { binding: 6, visibility: VF, texture: { viewDimension: '2d-array' } }] });
+// world textures (WORLD_TEX, baked in Blender): a 512 px sRGB array with mips. Layers: 0 lava glow, 1 cave rock (height in
+// alpha), 2 brine, 3 glowing moss, 4 sand (height in alpha). Filled asynchronously; until then the layers are black.
+const tMat = device.createTexture({ size: [512, 512, 5], format: 'rgba8unorm-srgb', usage: TU.TEXTURE_BINDING | TU.COPY_DST | TU.RENDER_ATTACHMENT, mipLevelCount: 10 });
+(async () => {
+  const img = async (n) => (WORLD_TEX[n] ? createImageBitmap(new Blob([unb64(WORLD_TEX[n])], { type: 'image/jpeg' })) : null);
+  const layers = [['lava_emission'], ['caverock_color', 'caverock_height'], ['brine_color'], ['moss_emission'], ['seabed_color', 'seabed_height']];
+  const cv = new OffscreenCanvas(512, 512), cx = cv.getContext('2d', { willReadFrequently: true });
+  for (let l = 0; l < layers.length; l++) {
+    const [c, h] = await Promise.all(layers[l].map(img)); if (!c) continue;
+    cx.clearRect(0, 0, 512, 512); cx.drawImage(c, 0, 0, 512, 512);
+    const px = cx.getImageData(0, 0, 512, 512);
+    if (h) { const hc = new OffscreenCanvas(512, 512).getContext('2d'); hc.drawImage(h, 0, 0, 512, 512); const hp = hc.getImageData(0, 0, 512, 512).data; for (let i = 0; i < 512 * 512; i++) px.data[i * 4 + 3] = hp[i * 4]; }
+    else for (let i = 0; i < 512 * 512; i++) px.data[i * 4 + 3] = 255;
+    // the mip chain, each level halved with the canvas (premultiplication is avoided: alpha holds the height)
+    let w = 512, data = px;
+    for (let m = 0; m < 10; m++) {
+      Q.writeTexture({ texture: tMat, mipLevel: m, origin: [0, 0, l] }, data.data, { bytesPerRow: w * 4, rowsPerImage: w }, [w, w, 1]);
+      if (w === 1) break;
+      const n = w >> 1, d = new Uint8ClampedArray(n * n * 4), s = data.data;
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) for (let k = 0; k < 4; k++) {
+        const a = ((y * 2) * w + x * 2) * 4 + k; d[(y * n + x) * 4 + k] = (s[a] + s[a + 4] + s[a + w * 4] + s[a + w * 4 + 4] + 2) >> 2;
+      }
+      w = n; data = { data: d };
+    }
+  }
+})().catch((e) => console.warn('world textures', e));
 const mkBG0 = (u, sh) => device.createBindGroup({ layout: bgl0, entries: [
   { binding: 0, resource: { buffer: u } }, { binding: 1, resource: sRep }, { binding: 2, resource: sClamp }, { binding: 3, resource: sCmp },
-  { binding: 4, resource: sh.createView() }, { binding: 5, resource: tWater.createView() }, { binding: 6, resource: tDetail.createView() }] });
+  { binding: 4, resource: sh.createView() }, { binding: 5, resource: tWater.createView() }, { binding: 6, resource: tDetail.createView() },
+  { binding: 7, resource: tMat.createView({ dimension: '2d-array' }) }] });
 const bg0 = mkBG0(ubo, tShadow), bg0s = mkBG0(uboS, tDummy);
 const bg1 = device.createBindGroup({ layout: bgl1, entries: [
   { binding: 0, resource: arrView(tCH) }, { binding: 1, resource: arrView(tCB) }, { binding: 2, resource: { buffer: lvBuf } },

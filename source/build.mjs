@@ -32,7 +32,10 @@ const DIVER_GLB = existsSync(DIVER) ? readFileSync(DIVER).toString('base64') : '
 // the built-in leviathans (made in Blender for the game; textures shrunk from leviathan_anim.glb into leviathan.glb)
 const LEVF = path.join(here, 'assets', 'leviathan.glb');
 const LEV_GLB = existsSync(LEVF) ? readFileSync(LEVF).toString('base64') : '';
-let js = `const APP_VERSION = '${APP_VERSION}';\nconst DIVER_GLB = '${DIVER_GLB}';\nconst LEV_GLB = '${LEV_GLB}';\nconst PLAYER_GLB = '${PLAYER_GLB}';\n` + FILES.map((f) => readFileSync(path.join(here, 'src', f), 'utf8')).join('\n');
+// world textures baked in Blender (assets/tex/game, 512 px JPEGs): lava, cave rock + height, brine, moss, sand + height
+const TEXD = path.join(here, 'assets', 'tex', 'game'), TEXN = ['lava_emission', 'caverock_color', 'caverock_height', 'brine_color', 'moss_emission', 'seabed_color', 'seabed_height'];
+const WORLD_TEX = existsSync(TEXD) ? JSON.stringify(Object.fromEntries(TEXN.filter((n) => existsSync(path.join(TEXD, n + '.jpg'))).map((n) => [n, readFileSync(path.join(TEXD, n + '.jpg')).toString('base64')]))) : '{}';
+let js = `const APP_VERSION = '${APP_VERSION}';\nconst DIVER_GLB = '${DIVER_GLB}';\nconst LEV_GLB = '${LEV_GLB}';\nconst PLAYER_GLB = '${PLAYER_GLB}';\nconst WORLD_TEX = ${WORLD_TEX};\n` + FILES.map((f) => readFileSync(path.join(here, 'src', f), 'utf8')).join('\n');
 const tpl = readFileSync(path.join(here, 'template.html'), 'utf8');
 // everything runs inside one async function; startup errors are shown on screen
 const wrap = (body) => `if(!self.__DEVGO)(async()=>{${body}\n})().catch(e=>{console.error(e);document.body.className='l e';document.getElementById('s').textContent=(e.cause?'':'Failed to start: ')+e.message});`;
