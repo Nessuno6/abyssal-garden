@@ -54,8 +54,8 @@ const tCX = tex(CM + 1, CM + 1, 'rgba8unorm', TU.STORAGE_BINDING | TU.TEXTURE_BI
 const arrView = (t) => t.createView({ dimension: '2d-array' });
 
 // uniforms (layouts in shaders.js)
-const UB = new Float32Array(184), UBS = new Float32Array(184); // G: 46 vec4 (sonar pulse, your sub's hull box, caves)
-const ubo = ebuf(736, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(736, BU.UNIFORM | BU.COPY_DST);
+const UB = new Float32Array(196), UBS = new Float32Array(196); // G: 49 vec4 (sonar pulse, your sub's hull box, caves, sky)
+const ubo = ebuf(784, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(784, BU.UNIFORM | BU.COPY_DST);
 // caves (cave.js): 3 resident systems, each with a fixed share of one vertex / index buffer and one instance record
 const CV_SLOTS = 3, CV_VCAP = 200000, CV_ICAP = 600000, cvVB = ebuf(CV_SLOTS * CV_VCAP * 16, BU.VERTEX | BU.COPY_DST), cvIB = ebuf(CV_SLOTS * CV_ICAP * 4, BU.INDEX | BU.COPY_DST);
 const CVI = new Float32Array(CV_SLOTS * 16), cvInst = ebuf(CV_SLOTS * 64, BU.VERTEX | BU.COPY_DST), CVSLOT = new Array(CV_SLOTS).fill(null);
@@ -215,17 +215,19 @@ const bgCull = device.createBindGroup({ layout: pCull.getBindGroupLayout(0), ent
 // ---------------------------------------------------------------- sun + shadow projection (render space, re-centred on SHC)
 const SUN = (() => { const v = [0.27, 1, -0.24], l = hypot(...v); return v.map((c) => c / l); })();
 const SM = new Float32Array(16), SHC = new Float64Array([1e18, 1e18]), SHR = TQ.shR;
-{
-  const L = SUN, lr = [L[1], -L[0], 0], ll = hypot(...lr); lr[0] /= ll; lr[1] /= ll;
+// the light direction under water (sky.js moves it with the time of day) and the sun's shadow projection
+function setSun(L) {
+  const lr = [L[1], -L[0], 0], ll = hypot(...lr); lr[0] /= ll; lr[1] /= ll;
   const lu = [L[1] * lr[2] - L[2] * lr[1], L[2] * lr[0] - L[0] * lr[2], L[0] * lr[1] - L[1] * lr[0]];
   const R = SHR, d0 = -175, d1 = 125, m = SM;
   m[0] = lr[0] / R; m[4] = lr[1] / R; m[8] = lr[2] / R; m[12] = 0;
   m[1] = lu[0] / R; m[5] = lu[1] / R; m[9] = lu[2] / R; m[13] = 0;
   m[2] = -L[0] / (d1 - d0); m[6] = -L[1] / (d1 - d0); m[10] = -L[2] / (d1 - d0); m[14] = d1 / (d1 - d0);
   m[3] = 0; m[7] = 0; m[11] = 0; m[15] = 1;
-  for (let i = 0; i < 3; i++) UB[48 + i] = UBS[48 + i] = SUN[i];
+  for (let i = 0; i < 3; i++) UB[48 + i] = UBS[48 + i] = L[i];
   UBS[52] = 0; UBS[58] = 1; // res.x = 0 marks the shadow pass; detail scale 1
 }
+setSun(SUN);
 
 // ---------------------------------------------------------------- meshes
 // custom models (IndexedDB 'abyssal'): 'models' holds the ones added from the menu ({ name, cls, type, data | main +
@@ -736,6 +738,7 @@ function stream() {
   }
   // shadow map: re-rendered when the swimmer leaves the middle of the box, and once more when population settles
   shadowNow = false;
+  if (sunMoved) { sunMoved = false; shadowNow = true; } // the sun moved (time of day)
   if (abs(cx - SHC[0]) > SHR * 0.2 || abs(cz - SHC[1]) > SHR * 0.2) { SHC[0] = round(cx / 8) * 8; SHC[1] = round(cz / 8) * 8; shadowNow = true; }
   if (nPop) popPending = true; else if (popPending) { popPending = false; shadowNow = true; }
   // the shadow matrix maps render space: translate by (camera - box centre)
@@ -788,8 +791,9 @@ function render() {
   let wr = 0, wg = 0, wb = 0, wm = 0, ws = 0;
   for (let i = 0; i < 7; i++) { const w = BIO[i], o = i * 4; wr += w * WATER_C[o]; wg += w * WATER_C[o + 1]; wb += w * WATER_C[o + 2]; wm += w * WATER_C[o + 3]; ws += w; }
   ws = ws || 1; m[68] = wr / ws; m[69] = wg / ws; m[70] = wb / ws; m[71] = wm / ws;
+  skyUniforms(m); // time of day and weather
   caveUniforms(m);
-  for (let i = 32; i < 184; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
+  for (let i = 32; i < 196; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
   // frustum planes in render space, from the rows of the view-projection (reversed, infinite depth: no far plane)
   for (let p = 0; p < 5; p++) {
     const a = p >> 1, sg = p & 1 ? -1 : 1, o = p * 4;
@@ -1001,6 +1005,7 @@ function frame(now) {
   F[ZONE] = BIO[1] * BIO[1] * (3 - 2 * BIO[1]);
   FDT = dt;
   caveTick(TQ.tbdr ? 3 : 4); // mesh the caves nearby, a few milliseconds a frame
+  skyTick();
   // third person: the scene renders from behind and above the diver (F[C*] is the eye until thirdOut)
   const tp = THIRD && PLAYER >= 0 && SUBM.mode === 'out';
   if (tp) thirdIn(dt);
@@ -1238,6 +1243,13 @@ $('gt').querySelectorAll('button').forEach((b) => { b.onclick = () => { const j 
 // game mode (World tab): survival, or creative where creatures do not notice you; applied at once
 function setMode(m) { CREATIVE = m === 'creative'; document.documentElement.classList.toggle('cr', CREATIVE); if (!CREATIVE && conOpen) conShow(false); save({ mode: m }); $('gm').querySelectorAll('button').forEach((b) => { b.className = b.dataset.m === m ? 'on' : ''; }); $('gmn').textContent = CREATIVE ? 'Creative: you are invisible to the creatures (nothing stalks, flees from or comes to look at you).' : 'Survival: creatures notice you: leviathans stalk and lunge, shy creatures flee, curious ones come closer.'; }
 $('gm').querySelectorAll('button').forEach((b) => { b.onclick = () => setMode(b.dataset.m); });
+// time of day and weather (sky.js)
+function setTod(v) { TODM = v; save({ tod: v }); $('tdy').querySelectorAll('button').forEach((b) => { b.className = b.dataset.t === v ? 'on' : ''; }); skyNote(); }
+function setWx(v) { WXM = v; save({ wx: v }); $('wxr').querySelectorAll('button').forEach((b) => { b.className = b.dataset.w === v ? 'on' : ''; }); skyNote(); }
+function skyNote() { $('skn').textContent = `${TODM === 'auto' ? `A day lasts ${DAYLEN / 60} minutes. ` : ''}${WXM === 'auto' ? 'The weather changes every few minutes. ' : ''}In LAN games everyone shares the host's clock.`; }
+$('tdy').querySelectorAll('button').forEach((b) => { b.onclick = () => setTod(b.dataset.t); });
+$('wxr').querySelectorAll('button').forEach((b) => { b.onclick = () => setWx(b.dataset.w); });
+setTod(TODM); setWx(WXM);
 setMode(CREATIVE ? 'creative' : 'survival');
 conInit(); // creative console (console.js)
 subInit2(); // submarine buttons (sub.js)

@@ -18,7 +18,7 @@ const dist = path.join(here, '..', 'dist');
 mkdirSync(path.join(dist, 'icons'), { recursive: true });
 // concatenation order matters: quality.js picks the tier (and requests the adapter) before shaders.js bakes it in;
 // audio.js comes before main.js so its state exists before main.js attaches the input handlers
-const FILES = ['quality.js', 'math.js', 'shaders.js', 'world.js', 'cave.js', 'audio.js', 'net.js', 'console.js', 'sub.js', 'main.js'];
+const FILES = ['quality.js', 'math.js', 'shaders.js', 'world.js', 'cave.js', 'sky.js', 'audio.js', 'net.js', 'console.js', 'sub.js', 'main.js'];
 // the app version (update checks) comes from the Tauri config, the one place it is set
 const APP_VERSION = JSON.parse(readFileSync(path.join(here, 'src-tauri', 'tauri.conf.json'), 'utf8')).version;
 const readable = process.argv.includes('--readable');

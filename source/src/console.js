@@ -79,7 +79,7 @@ function conRun(line) {
       '/kill: remove what /spawn added', '/attack: the nearest imported leviathan lunges at you', '/roar, /hunt: its roar, or start hunting',
       '/anim <clip>: the nearest animated model plays that clip', '/tp <x> <z> [y] | /tp leviathan | landmark | structure | cave | surface | biome',
       '/sub: park your submarine in front of you; /hull <0-100>, /power <0-100>',
-      '/mode survival | creative', '/list: loaded models and their clips', '/import <url> [class | auto]: add a model from a URL',
+      '/mode survival | creative', '/time cycle | dawn | noon | dusk | night', '/weather auto | clear | cloudy | overcast | rain | storm', '/list: loaded models and their clips', '/import <url> [class | auto]: add a model from a URL',
       '/clear: empty this log'].join('\n');
     case 'spawn': case 'summon': return cmdSpawn(a[0], +a[1]);
     case 'kill': { if (conBase < 0) return 'nothing spawned'; const k = LIFEN[6] - conBase; LIFEN[6] = conBase; conBase = -1; return `removed ${k}`; }
@@ -99,6 +99,8 @@ function conRun(line) {
       place(x, z); if (isFinite(+a[2]) && a[2] !== undefined) F[CY] = clamp(+a[2], hAt(x, z) + 1, YTOP());
       return `at ${x.toFixed(0)}, ${F[CY].toFixed(0)}, ${z.toFixed(0)}`;
     }
+    case 'time': if (['auto', 'cycle', 'dawn', 'noon', 'dusk', 'night'].includes(a[0])) { setTod(a[0] === 'cycle' ? 'auto' : a[0]); return 'time: ' + a[0]; } return 'time cycle | dawn | noon | dusk | night';
+    case 'weather': if (a[0] === 'auto' || WEATHERS.includes(a[0])) { setWx(a[0]); return 'weather: ' + a[0]; } return 'weather auto | ' + WEATHERS.join(' | ');
     case 'mode': if (a[0] === 'survival' || a[0] === 'creative') { setMode(a[0]); if (a[0] === 'survival') conShow(false); return 'mode ' + a[0]; } return 'mode survival | creative';
     case 'list': return CUSTOM.slice(0, ACTIVE_IDS.length).map((m) => `${m.name} (${MODEL_CLASSES[m.cls]})${m.skin ? ': ' + m.skin.anims.map((x) => x.name).join(', ') : ''}`).join('\n') || 'no models loaded';
     case 'clear': $('conlog').textContent = ''; return '';

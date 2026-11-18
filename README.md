@@ -659,6 +659,16 @@ collide like rock. **Go to → Cave** or `/tp cave` takes you to the nearest ent
 Swim up and your head comes out of the water (in creative you can fly up to 160 m): a sky with sun and clouds, and the
 open sea to the horizon. Your submarine can surface too. `/tp surface` takes you there.
 
+### Day, night and weather
+
+The sun crosses the sky once every 24 minutes (`sky.js`), or stays at dawn, noon, dusk or night (**World → Time of
+day**, `/time`). Above the surface: a blue sky with clouds by day, orange and violet at dawn and dusk, stars and the
+moon at night. Under water the light follows the refracted sun; at night only the moon, your lamp (it switches on by
+itself) and the glowing life are left. The weather (**World → Weather**, `/weather`) changes every few minutes: clear,
+cloudy, overcast, rain and storm. Clouds dim the light and soften the caustics; bad weather raises the waves and the
+murk; rain falls above the surface, and storms flash with lightning and thunder (muffled under water). Both follow
+the world clock, so everyone in a LAN game sees the same sky.
+
 ### The leviathans
 
 The built-in leviathans are the lantern leviathan (`assets/leviathan.glb`, made in Blender for this project): a 42 m

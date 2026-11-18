@@ -103,7 +103,7 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
 #mk { flex-wrap: wrap; }
 #mk span { flex-basis: 100%; }
 /* the class choices wrap onto two lines instead of squeezing their labels together */
-#mk button, #gt button { flex: 1 0 auto; padding: .7em .7em; }
+#mk button, #gt button, #tdy button, #wxr button { flex: 1 0 auto; padding: .7em .7em; }
 .nt { font-size: .62em; letter-spacing: .04em; color: #7ff3ffaa; font-weight: 600; margin-top: -.4em; }
 .o { display: flex; align-items: center; gap: .4em; padding: .4em; }
 .o span { flex: 1; color: #7ff3ff; }
@@ -213,6 +213,9 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
       <p id=gt class="o w"><span>Go to</span><button data-j=lev>Leviathan</button><button data-j=big>Landmark</button><button data-j=minor>Structure</button><button data-j=cave>Cave</button><button data-j=bio>Next biome</button><button data-j=sub>My sub</button></p>
       <p id=gm class=o><span>Game mode</span><button data-m=survival>Survival</button><button data-m=creative>Creative</button></p>
       <p id=gmn class=nt></p>
+      <p id=tdy class="o w"><span>Time of day</span><button data-t=auto>Cycle</button><button data-t=dawn>Dawn</button><button data-t=noon>Noon</button><button data-t=dusk>Dusk</button><button data-t=night>Night</button></p>
+      <p id=wxr class="o w"><span>Weather</span><button data-w=auto>Changing</button><button data-w=clear>Clear</button><button data-w=cloudy>Cloudy</button><button data-w=overcast>Overcast</button><button data-w=rain>Rain</button><button data-w=storm>Storm</button></p>
+      <p id=skn class=nt></p>
       </div>
       <div class=pg data-t=models hidden>
       <p id=mo class=o><span>Models</span><button id=ma>Add models</button><button id=mx>Clear</button><input id=mf type=file multiple accept=".zip,.glb,.fbx,.obj,model/gltf-binary,application/zip" hidden></p>

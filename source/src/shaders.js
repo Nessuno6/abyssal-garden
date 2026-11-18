@@ -488,7 +488,8 @@ const WK = array<vec3f, 10>(vec3f(1., 2., 1.), vec3f(-2., 1., .9), vec3f(3., 1.,
 // ---------------------------------------------------------------- shared scene code
 const S_G = /*wgsl*/`
 struct G { vp: mat4x4f, sm: mat4x4f, cam: vec4f, right: vec4f, up: vec4f, fwd: vec4f, sun: vec4f, res: vec4f, mis: vec4f, wrap: vec4f, fog: vec4f, wat: vec4f, son: vec4f, sb: vec4f, sbh: vec4f,
-  cav: vec4f, cm: array<vec4f, 8>, cl: array<vec4f, 8>, cc: array<vec4f, 8> };
+  cav: vec4f, cm: array<vec4f, 8>, cl: array<vec4f, 8>, cc: array<vec4f, 8>,
+  env: vec4f, sky: vec4f, sunc: vec4f };
 const SIG = vec3f(.058, .0235, .0195);
 const KD = vec3f(.056, .0245, .0170);
 const WCOL = vec3f(.16, .58, .90);
@@ -545,20 +546,38 @@ fn knollD(p: vec3f) -> f32 {
 fn vh2(p: vec2f) -> f32 { let i = floor(p); let f = p - i; let u = f * f * (3. - 2. * f);
   let a = hs(i.x + i.y * 57.); let b = hs(i.x + 1. + i.y * 57.); let c = hs(i.x + (i.y + 1.) * 57.); let d = hs(i.x + 1. + (i.y + 1.) * 57.);
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y); }
+// (sky.js: g.sky = the true sun + lightning, g.env = ambient, cloud cover, waves, rain)
 fn skyC(rd: vec3f) -> vec3f {
-  let y = max(rd.y, 0.); let mu = max(dot(rd, g.sun.xyz), 0.);
-  var c = mix(vec3f(.70, .82, .93), vec3f(.13, .34, .74), pow(y, .45)) * 1.5;
-  c += vec3f(1., .88, .66) * (pow(mu, 6.) * .3 + pow(mu, 60.) * .9) + vec3f(1., .97, .9) * ss(.9993, .9997, mu) * 30.;
+  let S = g.sky.xyz; let y = max(rd.y, 0.); let mu = max(dot(rd, S), 0.); let cv = g.env.y;
+  let day = ss(-.1, .25, S.y); let warm = ss(.45, .02, S.y) * ss(-.15, .03, S.y); let night = 1. - ss(-.2, .05, S.y);
+  var c = mix(vec3f(.70, .82, .93), vec3f(.13, .34, .74), pow(y, .45)) * 1.5 * day * day;
+  // dawn and dusk: a deep orange glow low over the horizon toward the sun, pink and violet above and away from it
+  let hz = pow(1. - y, 3.);
+  c = mix(c, (vec3f(1.7, .5, .14) * (.25 + .75 * pow(mu, 4.)) * hz + vec3f(.45, .2, .42) * (1. - hz) * .7 + vec3f(.1, .06, .2)) * (.5 + .5 * day), warm * .9);
+  // night: deep blue, stars, the moon opposite the sun
+  c += vec3f(.006, .012, .03) * (1. + y) * night;
+  let st = rd * 260.; let cell = floor(st);
+  let star = step(.9972, hs(dot(cell, vec3f(1., 57., 113.)))) * ss(.45, .1, length(fract(st) - .5));
+  c += vec3f(.9, .95, 1.) * star * night * 2.5 * (1. - cv) * ss(0., .12, rd.y);
+  let mm = max(dot(rd, -S), 0.);
+  c += vec3f(.8, .85, .95) * (ss(.9995, .9998, mm) * 5. + pow(mm, 90.) * .2) * night * (1. - cv * .85);
+  // the sun: disc and halo (hidden by heavy cloud)
+  c += vec3f(1., .88, .66) * (pow(mu, 6.) * .3 + pow(mu, 60.) * .9) * (day + warm) * (1. - .8 * cv) + vec3f(1., .97, .9) * ss(.9993, .9997, mu) * 30. * (1. - cv) * ss(-.05, .02, S.y);
+  // clouds: more of them with the cover, lit by day, glowing at dusk, dark at night
   if (rd.y > .015) {
-    let q = rd.xz / rd.y * 1.4 + vec2f(g.cam.w * .004, g.cam.w * .002) + g.wrap.xy * .0006;
-    let cl = ss(.48, .78, vh2(q) * .55 + vh2(q * 2.3 + 7.) * .3 + vh2(q * 5.1 + 3.) * .15) * ss(.015, .2, rd.y);
-    c = mix(c, vec3f(1.45, 1.45, 1.42) * (.8 + .4 * mu), cl * .85);
+    let q = rd.xz / rd.y * 1.4 + vec2f(g.cam.w * .004, g.cam.w * .002) * (1. + 2. * g.env.z) + g.wrap.xy * .0006;
+    let th = mix(.74, .3, cv);
+    let cl = ss(th - .2, th + .08, vh2(q) * .55 + vh2(q * 2.3 + 7.) * .3 + vh2(q * 5.1 + 3.) * .15) * ss(.015, .2, rd.y);
+    let cc = mix(vec3f(.025, .03, .04), vec3f(1.45, 1.45, 1.42), day * (1. - .72 * cv)) + vec3f(1.3, .55, .3) * warm * .7;
+    c = mix(c, cc * (.8 + .4 * mu), cl * .92);
   }
-  return c;
+  // overcast: a grey veil over everything; rain darkens it
+  c = mix(c, vec3f(.55, .6, .66) * (.03 + .97 * day) * (1. - .55 * g.env.w), cv * cv * .75);
+  return c + vec3f(.8, .85, 1.) * g.sky.w * 1.5;
 }
 fn lamp(p: vec3f, n: vec3f) -> vec3f {
   // g.fog.z: your submarine's lights (on at any depth, brighter)
-  let k = max(ss(-70., -150., g.cam.y), g.fog.z) * (1. + 1.5 * g.fog.z);
+  let k = max(max(ss(-70., -150., g.cam.y), g.fog.z), g.cav.z) * (1. + 1.5 * g.fog.z); // g.cav.z: night
   if (k <= 0.) { return cavL(p, n); }
   let v = g.cam.xyz - p; let d = length(v); let l = v / max(d, 1e-3);
   let cone = ss(.72, .96, dot(-l, g.fwd.xyz));
@@ -576,7 +595,7 @@ fn fogIn(ro: vec3f, rd: vec3f, d: f32, z: f32, sun: vec3f) -> vec3f {
   let mu = max(dot(rd, sun), 0.);
   let m2 = mu * mu;
   // g.cav.x: how far the camera is inside a cave (the water there gets no daylight)
-  return wcol(z) * sg(z) * exp(k * dz(ro.y)) * I * (1.22 + .3 * m2 * m2) * (1. - .93 * g.cav.x);
+  return wcol(z) * sg(z) * exp(k * dz(ro.y)) * I * (1.22 + .3 * m2 * m2) * (1. - .93 * g.cav.x) * g.env.x;
 }
 `;
 
@@ -618,28 +637,28 @@ fn caus(p: vec3f, d: f32) -> vec3f {
   let a = vec3f(textureSample(tW, sR, q * (310. / 1024.) + o).r, textureSample(tW, sR, q * (310. / 1024.)).r, textureSample(tW, sR, q * (310. / 1024.) - o).r);
   let b = textureSample(tW, sR, q.yx * (148. / 1024.) + .37).r;
   let c = min(pow(a, vec3f(2.3)) * 5. * (.45 + b * 1.3), vec3f(4.));
-  return mix(c, vec3f(.33), ss(35., 100., d));
+  return mix(c, vec3f(.33), max(ss(35., 100., d), g.env.y * .7)); // clouds soften the caustics
 }
 fn caus2(p: vec3f, d: f32) -> f32 {
   let q = cuv(p);
   let c = min(pow(textureSample(tW, sR, q * (250. / 1024.)).r, 1.4) * 2.6 * (.45 + textureSample(tW, sR, q.yx * (148. / 1024.) + .37).r * 1.3), 2.6);
-  return mix(c, .33, ss(35., 100., d));
+  return mix(c, .33, max(ss(35., 100., d), g.env.y * .7));
 }
-fn sunE(y: f32, z: f32) -> vec3f { return SUNC * exp(kd(z) * (dz(y) / g.sun.y)) * (.5 + .5 * sat(-y / 30.)); }
+fn sunE(y: f32, z: f32) -> vec3f { return g.sunc.rgb * exp(kd(z) * (dz(y) / g.sun.y)) * (.5 + .5 * sat(-y / 30.)); }
 fn amb(p: vec3f, n: vec3f, sky: f32, z: f32) -> vec3f {
   let up = n.y * .5 + .5;
-  return mix(vec3f(.22, .60, .80), g.wat.rgb * 1.05, .55) * (1. - .3 * z) * exp(kd(z) * dz(p.y) * 1.2) * (.3 + .7 * sky) * (.24 + .76 * up * up) * 1.3 * (.55 + .45 * sat(-p.y / 30.)) + vec3f(.003, .010, .016) + lamp(p, n);
+  return mix(vec3f(.22, .60, .80), g.wat.rgb * 1.05, .55) * (1. - .3 * z) * exp(kd(z) * dz(p.y) * 1.2) * (.3 + .7 * sky) * (.24 + .76 * up * up) * 1.3 * (.55 + .45 * sat(-p.y / 30.)) * g.env.x + vec3f(.003, .010, .016) + lamp(p, n);
 }
 // grotto weight under the camera (fog colour is per view, not per pixel)
 fn zone(p: vec3f) -> f32 { return g.sun.w; }
-fn side(p: vec3f, n: vec3f, open: f32, z: f32) -> vec3f { return mix(WCOL, PCOL, z) * exp(kd(z) * dz(p.y)) * open * (1. - abs(n.y)) * .7; }
+fn side(p: vec3f, n: vec3f, open: f32, z: f32) -> vec3f { return mix(WCOL, PCOL, z) * exp(kd(z) * dz(p.y)) * open * (1. - abs(n.y)) * .7 * g.env.x; }
 // exponential depth fog; g.fog.y scales the optical distance so a farther draw distance (desktop) still fades to the
 // background colour exactly at g.fog.x, with no pop-in at the edge
 fn fog(c: vec3f, wp: vec3f, z: f32) -> vec3f {
   // optical distance: g.wat.w is the biome's murk (vents thick, reefs clear)
   let v = wp - g.cam.xyz; let d = length(v); let rd = v / d; let ds = d * g.fog.y * g.wat.w;
   // above the surface: a light sea haze (anything under the water is behind the opaque surface)
-  if (g.cam.y > 0.) { let a = exp(-d * .0004); return c * a + skyC(vec3f(rd.x, max(rd.y, .02), rd.z)) * .75 * (1. - a); }
+  if (g.cam.y > 0.) { let a = exp(-d * .0004 * (1. + 3. * g.env.w)); return c * a + skyC(vec3f(rd.x, max(rd.y, .02), rd.z)) * .75 * (1. - a); }
   return c * exp(-sg(z) * ds) * ss(g.fog.x, g.fog.x * .8, d) + fogIn(g.cam.xyz, rd, ds, z, g.sun.xyz) * (.92 - .26 * z);
 }
 fn qrot(q: vec4f, v: vec3f) -> vec3f { return v + 2. * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
@@ -1309,14 +1328,14 @@ fn seaTop(V: vec3f, s: vec2f, d: f32) -> vec3f {
   let fr = .02 + .98 * pow(1. - ci, 5.);
   let R = reflect(V, nu);
   let refl = skyC(vec3f(R.x, abs(R.y), R.z));
-  let body = g.wat.rgb * vec3f(.05, .09, .12) * (1. + .6 * pow(sat(dot(-V, g.sun.xyz)), 2.)) + vec3f(.004, .02, .03);
-  return mix(body, refl, fr) + vec3f(1., .93, .8) * (pow(sat(dot(R, g.sun.xyz)), 350.) * 30. + pow(sat(dot(R, g.sun.xyz)), 40.) * .4);
+  let body = (g.wat.rgb * vec3f(.05, .09, .12) * (1. + .6 * pow(sat(dot(-V, g.sky.xyz)), 2.)) + vec3f(.004, .02, .03)) * g.env.x;
+  return mix(body, refl, fr) + g.sunc.rgb * .6 * (1. - g.env.y) * (pow(sat(dot(R, g.sky.xyz)), 350.) * 30. + pow(sat(dot(R, g.sky.xyz)), 40.) * .4);
 }
 @fragment fn fs(i: VO) -> @location(0) vec4f {
   let v = i.wp - g.cam.xyz; let d = length(v); let V = v / d;
   let fl = ss(260., 60., d);
   let W = WP(i.wp);
-  let s = (textureSample(tW, sR, W.xz * (79. / 1024.)).ba + textureSample(tW, sR, W.zx * (218. / 1024.) + .2).ba * .7 + textureSample(tW, sR, W.xz * (28. / 1024.) + .6).ba * .8) * fl;
+  let s = (textureSample(tW, sR, W.xz * (79. / 1024.)).ba + textureSample(tW, sR, W.zx * (218. / 1024.) + .2).ba * .7 + textureSample(tW, sR, W.xz * (28. / 1024.) + .6).ba * .8) * fl * (.5 + 1.3 * g.env.z); // rougher in bad weather
   if (g.cam.y > 0.) { return fin(fog(seaTop(V, s, d), i.wp, 0.)); }
   let n = normalize(vec3f(-s.x * .8, -1., -s.y * .8));
   let ci = sat(dot(V, -n));
@@ -1325,7 +1344,8 @@ fn seaTop(V: vec3f, s: vec2f, d: f32) -> vec3f {
   let rr = refract(V, n, 1.33);
   let sd = max(dot(rr, g.sun.xyz), 0.);
   let fr = pow(1. - sqrt(max(k, 0.)), 5.);
-  let sky = (vec3f(.30, .78, 1.) * 1.3 * clamp(1. + 3.8 * (s.x * .6 - s.y * .8), .25, 3.) + vec3f(1., .95, .85) * (pow(sd, 60.) * 1.3 + pow(sd, 500.) * 12.)) * (1. - fr);
+  // Snell's window: the sky itself (day, dusk, night, clouds) seen through the rippled surface
+  let sky = (skyC(normalize(rr + vec3f(0., .02, 0.))) * .85 * clamp(1. + 3.8 * (s.x * .6 - s.y * .8), .25, 3.) + g.sunc.rgb * .6 * (1. - g.env.y) * (pow(sd, 60.) * 1.3 + pow(sd, 500.) * 12.)) * (1. - fr);
   let z = zone(i.wp);
   let R = reflect(V, n);
   let refl = fogIn(i.wp, R, 300., z, g.sun.xyz) * 1.15;
@@ -1453,7 +1473,7 @@ const RF = ${RAYDIV}.;
   let mu = max(dot(rd, sx), 0.);
   let ph = mix(.2 + 2.0 * mu * mu * mu, .5, g.sun.w);
   let wc = g.wat.rgb + mix(vec3f(.04, .07, .05), vec3f(.28, .16, .12), g.sun.w);
-  return vec4f(min(acc * dt * sgz * wc * SUNC * ph * g.mis.y * (1. - .78 * g.sun.w) * (1. - g.cav.x), vec3f(20.)), zl);
+  return vec4f(min(acc * dt * sgz * wc * g.sunc.rgb * ph * g.mis.y * (1. - .78 * g.sun.w) * (1. - g.cav.x) * (1. - .8 * g.env.y), vec3f(20.)), zl);
 }
 `;
 // depth-aware 3x3 blur of the low-res shafts (hides the sampling dither)
@@ -1520,6 +1540,14 @@ fn sat3(x: vec3f) -> vec3f { return clamp(x, vec3f(0.), vec3f(1.)); }
     let geo = select(1., 0., zf > 5e4) * ss(6., 18., D) * ss(330., 280., D);
     let glow = (band * (.5 + edge) * 1.6 + seen * (.06 + edge * 1.3)) * geo;
     c = c * (1. - .3 * min(band + seen, 1.) * geo) + vec3f(.25, .95, 1.) * glow;
+  }
+  // rain above the surface: thin falling streaks, a darker, greyer view
+  if (g.cam.y > 0. && g.env.w > .01) {
+    let rp = vec2f(uv.x * 150. + uv.y * 16., uv.y * 6. - g.cam.w * 8.);
+    let cid = floor(rp); let fr = fract(rp);
+    let h = hs(cid.x * 13.1 + cid.y * 71.7);
+    let streak = step(1. - .3 * g.env.w, h) * ss(.14, 0., abs(fr.x - .5 + (h - .5) * .5)) * ss(0., .3, fr.y) * ss(1., .55, fr.y);
+    c = c * (1. - .2 * g.env.w) + vec3f(.22, .25, .3) * (.25 + g.env.x) * streak * .7;
   }
   let q = uv - .5;
   c *= 1. - dot(q, q) * .55;
