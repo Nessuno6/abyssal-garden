@@ -675,7 +675,7 @@ next visit. If loading crashes the tab or the GPU device is lost, the next launc
 ### Caves
 
 About half of the 640 m world cells hold a cave system (`cave.js`): two mouths, each opening in the side of a rocky
-knoll, a winding tunnel 34-48 m wide (a submarine fits easily) 35-115 m under the rock, a chamber halfway and often a side
+knoll, a winding tunnel 26-36 m wide (a submarine fits) 30-50 m under the rock, a chamber halfway and often a side
 passage to a dead-end grotto. A system is a skeleton of capsules plus 3D noise, meshed on the CPU with surface nets a
 few milliseconds per frame when you come within about 900 m; the entrances are made the way voxel-terrain games make
 them: within ~60 m of each mouth the seabed itself is part of the cave's mesh (ground, a rocky rise and the tunnel are
@@ -685,7 +685,7 @@ the plants keep out of that patch, and a ring of boulders covers the join with t
 the deep: vent chimneys, glowing veins and pools). The brightest growths are real lights (the 8 nearest). Caves
 collide like rock. **Go to → Cave** or `/tp cave` takes you to the nearest entrance.
 
-**Caverns.** Half the systems open into a giant cavern instead of a chamber: a hall 220-360 m across and 130-190 m
+**Caverns.** Two systems in five open into a giant cavern instead of a chamber: a hall 140-220 m across and about 100 m
 high, deep under the rock, with rock pillars and a natural arch, reached down a shaft from the tunnel. Each has a mood:
 a **brine river** (a glowing green sheet over the floor, green haze), a **lava lake** (deep down; crusted, flowing,
 red, lighting the cavern from below) or a **bioluminescent cove** (blue, crystals everywhere, a great glowing growth in
