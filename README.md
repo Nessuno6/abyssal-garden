@@ -478,7 +478,7 @@ in Blender this way. Without an interior the sub still works: boarding goes stra
 | Fire a missile | `X` | Fire button |
 | Pilot view / chase camera | `V` | `◐` |
 
-* **Power** drives everything. Thrust, boost, lights, sonar pings (4 % each) and repairs use it. It recharges slowly,
+* **Power** drives everything. Thrust, boost, the lights (1.2 % a second), the sonar (2 % a second) and repairs use it. It recharges slowly,
   faster near the surface (above −30 m). At 0 the lights go out and the sub crawls.
 * **Hull:**
   * a hit above 6 m/s on rock or a structure damages it, as does a leviathan's bite (22 %);
@@ -507,11 +507,16 @@ tread (treading water), swim, fast, walk, jump and drive. Near the seabed you wa
 pushes off in a jump; at the surface you tread water; at your sub's controls you sit and drive. Other players see the
 character each of them chose.
 
+### Views
+
+Swimming, `V` cycles first person → behind you → in front of you (to see your face) → first person.
+
 ### Driving the sub: two views and the HUD
 
 `V` switches between third person (behind and above the hull, pulled in when rock is in the way) and first person: you
 sit at the controls (the seat reclined) with your hands on a stick that tilts as you steer; looking slightly down at it
-counts as level. The HUD keeps the sonar map in the top-left corner and the gauges in the top right: three arcs, hull
+counts as level. Leave the controls and the sub slowly levels itself. Leviathans that catch you in the sub grab it in their
+jaws (their `grab` clip): the sub shakes and the hull gives until they let go. The HUD keeps the sonar map in the top-left corner and the gauges in the top right: three arcs, hull
 (blue, shield), power (yellow, bolt) and boost (grey, rocket), around your depth and speed.
 
 ### Missiles

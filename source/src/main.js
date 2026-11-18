@@ -295,7 +295,7 @@ if (LEV_GLB) {
     const fm = finishModel(await parseModelRecord({ name: 'leviathan', type: 'glb', data: unb64(LEV_GLB).buffer }, TX.model), 'l', 'leviathan');
     fm.cls = 'levb'; LEVM = CUSTOM.length; CUSTOM.push(fm);
     const an = fm.skin ? fm.skin.anims : [], f = (n) => max(0, an.findIndex((a) => a.name === n));
-    LEVC = { swim: f('swim'), fast: f('fast'), idle: f('idle'), lure: f('lure'), flare: f('flare'), attack: f('attack'), roar: f('roar'), turn: f('turn') };
+    LEVC = { grab: an.findIndex((a) => a.name === 'grab'), swim: f('swim'), fast: f('fast'), idle: f('idle'), lure: f('lure'), flare: f('flare'), attack: f('attack'), roar: f('roar'), turn: f('turn') };
   } catch (err) { console.warn('leviathan model', err); }
 }
 await say('Building set pieces…', 0.3, 1500);
@@ -414,6 +414,7 @@ function ciPut(m, x, y, z, sc, qx, qy, qz, qw, cls, seed, ph, sp, pose = -2, tin
 //   stalking you: flares its frills and splays its jaws, roars, then circles fast; lunges (attack) when its head
 //   passes within 30 m of you;
 //   hunting a school: swings its glowing lure in front of its mouth, between fast stretches; moving off: fast
+const LGRAB = new Float64Array(64).fill(-1), LGCD = new Float64Array(64);
 function levPut() {
   const LG = NSCH + NMAN + NJEL + NTUR;
   for (let i = 0; i < NLEV; i++) {
@@ -422,11 +423,30 @@ function levPut() {
     const P = (a) => [LEV[i * 4] + R * cos(a), LEV[i * 4 + 1] + 5 * sin(0.45 * a + ph), LEV[i * 4 + 2] + R * 0.85 * sin(a)];
     const h = P(a0), t = P(a0 - sg * len / R);
     let fx = h[0] - t[0], fy = h[1] - t[1], fz = h[2] - t[2]; const fl = hypot(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
+    // grabbing your sub: stalking you, its head within 45 m of the sub you pilot; it swims onto it, holds, lets go
+    const inSub = SUBM.m >= 0 && SUBM.mode !== 'out' && !SUBM.ride && !CREATIVE && LEVC.grab >= 0;
+    if (LGRAB[i] < 0 && inSub && BST[LG + i] === 1 && F[TIME] > LGCD[i] && hypot(h[0] - SUBM.x, h[1] - SUBM.y, h[2] - SUBM.z) < 60) LGRAB[i] = F[TIME];
+    let gw = 0, gu = -1;
+    if (LGRAB[i] >= 0) {
+      const dur = CUSTOM[LEVM].skin.anims[LEVC.grab].dur; gu = (F[TIME] - LGRAB[i]) / dur;
+      if (gu >= 1 || !inSub) { LGRAB[i] = -1; LGCD[i] = F[TIME] + 35; BST[LG + i] = 2; BTMR[LG + i] = 25; gu = -1; }
+      else {
+        gw = max(0, grabW(gu));
+        // the head goes to the sub's side, the body comes in at right angles to it
+        const sx = cos(SUBM.yaw), sz = sin(SUBM.yaw), side = (h[0] - SUBM.x) * sx + (h[2] - SUBM.z) * sz >= 0 ? 1 : -1;
+        const gx = SUBM.x + sx * side * 4, gy = SUBM.y + 1, gz = SUBM.z + sz * side * 4;
+        h[0] += (gx - h[0]) * gw; h[1] += (gy - h[1]) * gw; h[2] += (gz - h[2]) * gw;
+        let ax = -sx * side, az = -sz * side; fx += (ax - fx) * gw; fy *= 1 - gw; fz += (az - fz) * gw; const l2 = hypot(fx, fy, fz) || 1; fx /= l2; fy /= l2; fz /= l2;
+        if (gu > 0.25 && gu < 0.8 && ciPass === 1) subGrab(FDT); // once a frame (levPut runs in both instance passes)
+      }
+    }
     const L = len * fade, q = qMul(qAxis(0, 1, 0, atan2(fx, fz)), qAxis(1, 0, 0, -Math.asin(clamp(fy, -1, 1))));
     const st = BST[LG + i], tm = BTMR[LG + i], near = hypot(h[0] - F[CX], h[1] - F[CY], h[2] - F[CZ]);
     let clip = LEVC.swim, ct = F[TIME] * 0.9 + i * 0.7;
+    if (gu >= 0) { clip = LEVC.grab; ct = gu * CUSTOM[LEVM].skin.anims[LEVC.grab].dur; }
     const cyc = (p, n) => (F[TIME] + i * 7.3) % p < n;
-    if (st === 1 && !CREATIVE && near < 30) { clip = LEVC.attack; ct = F[TIME] + i; }
+    if (gu >= 0) { /* grabbing */ }
+    else if (st === 1 && !CREATIVE && near < 30) { clip = LEVC.attack; ct = F[TIME] + i; }
     else if (st === 1 && tm > 38) { clip = LEVC.flare; ct = 40 - tm; }
     else if (st === 1 && tm > 35.8) { clip = LEVC.roar; ct = 38 - tm; }
     else if (st === 3 && cyc(20, 9)) { clip = LEVC.lure; ct = F[TIME] + i; }
@@ -439,7 +459,7 @@ function levPut() {
 function ciEmit() {
   subEmit();
   if (PLAYER >= 0) {
-    if (THIRD && SUBM.mode === 'out') avatarPut(TPP[0], TPP[1], TPP[2], F[YAW], F[PIT], ME.spd, ME.t, nameHue(SAVE.nick || ''), PLAYER, ME.jump);
+    if (THIRD && SUBM.mode === 'out') avatarPut(TPP[0], TPP[1], TPP[2], TPA[0], TPA[1], ME.spd, ME.t, nameHue(SAVE.nick || ''), PLAYER, ME.jump);
     for (const [, P] of NET.peers) if (!P.ride) avatarPut(P.x, P.y, P.z, P.yaw, P.pit, P.spd || 0, P.at || 0, P.L.seed, charOf(P.ch));
   }
   if (LEVM >= 0) levPut();
@@ -500,15 +520,23 @@ function moverPose(ix, m, k, yaw, spd, g, x, y, z) {
     let tgt = null;
     if (st === 1 && dPl < 25) tgt = [F[CX], F[CY], F[CZ]];
     else if (st === 3) { const P = huntTarget(g); if (hypot(P[0] - x, P[1] - y, P[2] - z) < 20) tgt = [P[0], P[1], P[2]]; }
-    if (tgt && MV.cd[ix] <= 0 && play('attack', true)) {
-      MV.cd[ix] = 12; const o = ix * 3, ex = tgt[0] - x, ey = tgt[1] - y, ez = tgt[2] - z, l = hypot(ex, ey, ez) || 1, reach = max(0, min(l - 4, 18));
+    const subTgt = st === 1 && SUBM.m >= 0 && SUBM.mode !== 'out' && !SUBM.ride && !CREATIVE && clipOf(m, 'grab') >= 0;
+    if (subTgt && dPl < 40) tgt = [SUBM.x, SUBM.y, SUBM.z];
+    if (tgt && MV.cd[ix] <= 0 && play(subTgt ? 'grab' : 'attack', true)) {
+      MV.cd[ix] = subTgt ? 30 : 12; const o = ix * 3, ex = tgt[0] - x, ey = tgt[1] - y, ez = tgt[2] - z, l = hypot(ex, ey, ez) || 1, reach = max(0, min(l - 4, subTgt ? 40 : 18));
       MV.lv[o] = ex / l * reach; MV.lv[o + 1] = ey / l * reach; MV.lv[o + 2] = ez / l * reach;
     } else if (st === 1 && dPl < 70 && MV.roar[ix] <= 0 && play('roar', true)) MV.roar[ix] = 18;
     else play(st === 3 ? 'fast' : 'swim', false) || play('swim', false);
     // lunge weight: back during the first quarter of the attack, out to full reach in the middle, home at the end
     if (MV.once[ix] && MV.clip[ix] === clipOf(m, 'attack')) { const u = MV.t[ix] / S.anims[MV.clip[ix]].dur; MV.lw[ix] = u < 0.25 ? -0.15 * sin(u * 4 * PI) : sin((u - 0.25) / 0.75 * PI); }
+    // a grab: the jaws follow the sub while they hold it (the reach is re-aimed at the hull every frame)
+    if (MV.once[ix] && MV.clip[ix] === clipOf(m, 'grab')) {
+      const u = MV.t[ix] / S.anims[MV.clip[ix]].dur, o = ix * 3, ex = SUBM.x - x, ey = SUBM.y - y, ez = SUBM.z - z, l = hypot(ex, ey, ez) || 1, reach = max(0, l - 6);
+      MV.lw[ix] = grabW(u); MV.lv[o] = ex / l * reach; MV.lv[o + 1] = ey / l * reach; MV.lv[o + 2] = ez / l * reach;
+      if (u > 0.25 && u < 0.8) subGrab(dt);
+    }
     // the bite lands on your submarine if the lunge reaches it
-    if (MV.lw[ix] > 0.5) { const o = ix * 3, w = MV.lw[ix]; subBite(ix, x + MV.lv[o] * w, y + MV.lv[o + 1] * w, z + MV.lv[o + 2] * w); }
+    if (MV.lw[ix] > 0.5 && MV.clip[ix] !== clipOf(m, 'grab')) { const o = ix * 3, w = MV.lw[ix]; subBite(ix, x + MV.lv[o] * w, y + MV.lv[o + 1] * w, z + MV.lv[o + 2] * w); }
   } else if (k === 0) {
     // creature: a quick turn then fast when fleeing a leviathan or the diver, idle when hovering by the diver
     const dPl = CREATIVE ? 1e9 : hypot(F[CX] - x, F[CZ] - z);
@@ -1144,9 +1172,27 @@ function jump(n) {
 // ---------------------------------------------------------------- first / third person (V, or the ◐ button)
 let THIRD = SAVE.view === 3, tpDist = 3.4;
 const TPP = new Float64Array(3); // the diver's position while the camera is elsewhere
-function toggleView() { THIRD = !THIRD; save({ view: THIRD ? 3 : 1 }); }
+// V: first person -> behind you -> in front of you (to see your face) -> first person; in a sub: first / third person
+let FRONT = false;
+const TPA = new Float64Array(2); // your view (yaw, pitch) while the camera looks elsewhere
+function toggleView() {
+  if (SUBM.mode !== 'out') { THIRD = !THIRD; FRONT = false; }
+  else if (!THIRD) { THIRD = true; FRONT = false; } else if (!FRONT) FRONT = true; else { THIRD = false; FRONT = false; }
+  save({ view: THIRD ? 3 : 1 });
+}
 function thirdIn(dt) {
-  TPP[0] = F[CX]; TPP[1] = F[CY]; TPP[2] = F[CZ];
+  TPP[0] = F[CX]; TPP[1] = F[CY]; TPP[2] = F[CZ]; TPA[0] = F[YAW]; TPA[1] = F[PIT];
+  if (FRONT) {
+    // in front of you, a little above your eyes, looking back at your face
+    const fx = sin(F[YAW]), fz = -cos(F[YAW]); let d = 0.6;
+    for (let k = 1; k <= 10; k++) { const t = 1.9 * k / 10; if (sdScene(TPP[0] + fx * t, TPP[1] + 0.25, TPP[2] + fz * t) < 0.35) break; d = t; }
+    tpDist += (d - tpDist) * (d < tpDist ? 1 : 1 - Math.exp(-dt * 3));
+    // at your face: standing on the seabed the body stands on the ground (avatarPut), so the head is 1.6 m above it
+    const g = hAt(TPP[0], TPP[2]), hy = TPP[1] - g < 2.4 ? g + 1.62 : TPP[1];
+    F[CX] = TPP[0] + fx * tpDist; F[CY] = min(hy + 0.12, YTOP() + 0.6); F[CZ] = TPP[2] + fz * tpDist;
+    F[YAW] += PI; F[PIT] = -0.05;
+    updateLandmarks(); return;
+  }
   const cp = cos(F[PIT]), fx = cp * sin(F[YAW]), fy = sin(F[PIT]), fz = -cp * cos(F[YAW]);
   // back off along the view until rock is in the way, easing the distance so the camera does not jump
   let d = 0.6; const want = 3.4;
@@ -1155,7 +1201,7 @@ function thirdIn(dt) {
   F[CX] = TPP[0] - fx * tpDist; F[CY] = min(TPP[1] - fy * tpDist + 0.08 * tpDist, YTOP() + 0.6); F[CZ] = TPP[2] - fz * tpDist;
   updateLandmarks(); // camera-relative instance positions for the new eye
 }
-function thirdOut() { F[CX] = TPP[0]; F[CY] = TPP[1]; F[CZ] = TPP[2]; }
+function thirdOut() { F[CX] = TPP[0]; F[CY] = TPP[1]; F[CZ] = TPP[2]; F[YAW] = TPA[0]; F[PIT] = TPA[1]; }
 // the local diver's swim state: idle when still, swim, fast above 12 m/s; the clip clock runs with the speed
 const ME = { t: 0, spd: 0, jump: -1 };
 function playerAnim(dt) {

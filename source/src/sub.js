@@ -61,7 +61,7 @@ function subStep(dt) {
   const C = CUSTOM[SUBM.m], hb = C.hb, inf = CREATIVE;
   // systems: power recharges (faster near the surface), boost charges back like stamina
   if (!SUBM.ride) {
-    const surf = SUBM.y > -30 ? 1 : 0.25, use = (SUBM.lights ? 0.4 : 0) + (SUBM.boosting ? 2 : 0) + hypot(SUBM.vx, SUBM.vy, SUBM.vz) * 0.025;
+    const surf = SUBM.y > -30 ? 1 : 0.25, use = (SUBM.lights ? 1.2 : 0) + (SUBM.boosting ? 2 : 0) + hypot(SUBM.vx, SUBM.vy, SUBM.vz) * 0.025;
     if (!inf) SUBM.power = clamp(SUBM.power + (surf - use) * dt, 0, 100); else SUBM.power = 100;
     if (SUBM.power <= 0 && SUBM.lights) { SUBM.lights = false; subSay('Out of power: lights off'); }
     SUBM.bt -= dt; if (!SUBM.boosting && SUBM.bt <= 0) SUBM.boost = min(100, SUBM.boost + 15 * dt);
@@ -109,7 +109,8 @@ function subDrive(dt, C, hb) {
   subMove(dt, hb);
 }
 // parked / unpiloted: slows to a stop, drifts gently, and still collides
-function subDrift(dt, hb) { const k = 1 - exp(-dt * 1.5); SUBM.vx -= SUBM.vx * k; SUBM.vy -= SUBM.vy * k; SUBM.vz -= SUBM.vz * k; SUBM.yr = 0; subMove(dt, hb); }
+// with nobody at the controls the sub also levels itself, slowly (so you can walk the cabin)
+function subDrift(dt, hb) { SUBM.pit -= SUBM.pit * (1 - exp(-dt * 0.7)); const k = 1 - exp(-dt * 1.5); SUBM.vx -= SUBM.vx * k; SUBM.vy -= SUBM.vy * k; SUBM.vz -= SUBM.vz * k; SUBM.yr = 0; subMove(dt, hb); }
 // move, then push out of rock and structures at bow, middle and stern; hard hits damage the hull
 function subMove(dt, hb) {
   SUBM.x += SUBM.vx * dt; SUBM.y += SUBM.vy * dt; SUBM.z += SUBM.vz * dt;
@@ -226,7 +227,7 @@ function sonarContacts(T, now) {
 }
 function sonarStep(T) {
   if (!SON.on) return;
-  if (!SUBM.ride && !CREATIVE) { SUBM.power = max(0, SUBM.power - 0.8 * FDT); if (SUBM.power <= 0) { SON.on = false; subSay('Sonar off: no power'); return; } }
+  if (!SUBM.ride && !CREATIVE) { SUBM.power = max(0, SUBM.power - 2 * FDT); if (SUBM.power <= 0) { SON.on = false; subSay('Sonar off: no power'); return; } }
   const now = performance.now() / 1000, turn = Math.floor((now - SON.t0) / SON_PERIOD);
   if (turn !== SON.turn) {
     // a new sweep: ping, pulse, fresh contacts (each revealed when the sweep reaches its bearing)
@@ -335,6 +336,7 @@ function subEmit() {
   }
   const C = CUSTOM[SUBM.m], aboard = SUBM.mode !== 'out' && !SUBM.ride;
   MODELS[SUBM.m].noGlass = SUBM.mode !== 'out' && !(SUBM.mode === 'pilot' && THIRD);
+  if (SUBM.i >= 0) MODELS[SUBM.i].noGlass = MODELS[SUBM.m].noGlass; // the interior's own window glass too
   const put = (T, clipT, clip, own) => {
     const q = subQ(T.yaw, T.pit), pose = C.skin && ciPass === 1 ? poseAlloc(SUBM.m, max(clip, 0), clipT) : -2;
     subNoCol = own && SUBM.mode !== 'out';
@@ -370,8 +372,17 @@ function subHud() {
   g.save(); g.beginPath(); g.arc(W2, W2, W2 - 1, 0, TAU); g.clip();
   // the map: centred where it was built, scaled so the range fills the screen, turned so ahead is up
   g.save(); g.translate(W2, W2); g.rotate(-T.yaw); const sc = (W2 - 2) / SON_RANGE, span = SON_RANGE * 2.4;
-  g.globalAlpha = SON.on ? 0.95 : 0.5; g.imageSmoothingEnabled = true;
-  g.drawImage(SON.topo, (SON.tx - T.x - span / 2) * sc, (SON.tz - T.z - span / 2) * sc, span * sc, span * sc);
+  // like a real sonar screen: the map is dim, and glows where the sweep has just passed, fading over the turn
+  const mx = (SON.tx - T.x - span / 2) * sc, mz = (SON.tz - T.z - span / 2) * sc;
+  g.imageSmoothingEnabled = true; g.globalAlpha = SON.on ? 0.22 : 0.4;
+  g.drawImage(SON.topo, mx, mz, span * sc, span * sc);
+  if (SON.on) {
+    const sa = ((now - SON.t0) % SON_PERIOD) / SON_PERIOD * TAU - PI / 2 + T.yaw; // the sweep, in the map's (north-up) frame
+    for (let k = 0; k < 12; k++) {
+      g.save(); g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, W2, sa - (k + 1) * 0.26, sa - k * 0.26); g.closePath(); g.clip();
+      g.globalAlpha = 0.75 * (1 - k / 12) ** 1.6; g.drawImage(SON.topo, mx, mz, span * sc, span * sc); g.restore();
+    }
+  }
   // north marker
   g.globalAlpha = 0.9; g.fillStyle = '#9ff6ff'; g.font = '700 11px system-ui'; g.textAlign = 'center'; g.fillText('N', 0, -(W2 - 12));
   g.restore(); g.globalAlpha = 1;
@@ -383,12 +394,12 @@ function subHud() {
     for (let k = 0; k < 24; k++) { g.fillStyle = `rgba(127,243,255,${0.16 * (1 - k / 24)})`; g.beginPath(); g.moveTo(W2, W2); g.arc(W2, W2, W2 - 2, a - (k + 1) * 0.04, a - k * 0.04); g.fill(); }
     g.strokeStyle = 'rgba(190,250,255,.9)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(W2, W2); g.lineTo(W2 + cos(a) * (W2 - 2), W2 + sin(a) * (W2 - 2)); g.stroke();
   }
-  // contacts: where they were when the sweep lit them, fading slowly
+  // contacts: where they were when the sweep lit them, fading out before the sweep comes round again
   const cy = cos(T.yaw), sy = sin(T.yaw);
-  SON.blips = SON.blips.filter((c) => now - c.rt < 45);
+  SON.blips = SON.blips.filter((c) => now - c.rt < SON_PERIOD);
   for (const c of SON.blips) {
     if (now < c.rt) continue;
-    const a = exp(-(now - c.rt) / 12), dx = c.x - T.x, dz = c.z - T.z, fx = dx * sy - dz * cy, rx = dx * cy + dz * sy;
+    const a = (1 - (now - c.rt) / SON_PERIOD) ** 1.5, dx = c.x - T.x, dz = c.z - T.z, fx = dx * sy - dz * cy, rx = dx * cy + dz * sy;
     const px = W2 + rx * sc, py = W2 - fx * sc;
     g.fillStyle = c.kind === 'L' ? `rgba(255,90,80,${a})` : c.kind === 's' ? `rgba(120,240,255,${a})` : c.kind === 'f' ? `rgba(130,255,150,${a})` : c.kind === 'r' ? `rgba(220,220,230,${a * 0.8})` : `rgba(255,220,110,${a})`;
     g.beginPath(); g.arc(px, py, c.kind === 'L' ? 4 : c.kind === 'r' ? 3 : 2.5, 0, TAU); g.fill();
@@ -403,6 +414,17 @@ function subBite(ix, x, y, z) {
   const r = max(CUSTOM[SUBM.m].hb[0], CUSTOM[SUBM.m].hb[1]) * SUB_LEN + 6;
   if (hypot(x - SUBM.x, y - SUBM.y, z - SUBM.z) < r) { MV.hit[ix] = 1; subDamage(22, 'leviathan bite'); }
 }
+// a leviathan holding your sub in its jaws (its 'grab' clip): the hull gives, the sub is shaken, so is the camera
+let grabSaid = 0;
+function subGrab(dt) {
+  if (SUBM.m < 0 || SUBM.mode === 'out' || SUBM.ride) return;
+  if (!CREATIVE) SUBM.hull = max(0, SUBM.hull - 7 * dt);
+  SUBM.vx += (Math.random() - 0.5) * 60 * dt; SUBM.vy += (Math.random() - 0.5) * 30 * dt; SUBM.vz += (Math.random() - 0.5) * 60 * dt;
+  SUBM.pit += (Math.random() - 0.5) * 0.6 * dt; shake = max(shake, 0.9);
+  if (performance.now() - grabSaid > 4000) { grabSaid = performance.now(); subSay('A leviathan has your sub in its jaws!'); }
+}
+// grab weight over the clip (0..1): wind up, strike, hold, let go
+const grabW = (u) => (u < 0.15 ? -0.15 * sin(u / 0.15 * PI) : u < 0.25 ? sin((u - 0.15) / 0.1 * PI / 2) : u < 0.8 ? 1 : cos((u - 0.8) / 0.2 * PI / 2));
 // LAN: your sub in your messages, the others' subs from theirs, lights asked by your passengers
 function subNetOut(m) {
   if (SUBM.m < 0) return;
