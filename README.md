@@ -683,6 +683,13 @@ plants out of them. Daylight only reaches near the mouths. Each cave has a theme
 the deep: vent chimneys, glowing veins and pools). The brightest growths are real lights (the 8 nearest). Caves
 collide like rock. **Go to → Cave** or `/tp cave` takes you to the nearest entrance.
 
+**Caverns.** Two systems in five open into a giant cavern instead of a chamber: a hall 140-220 m across and about 100 m
+high, deep under the rock, with rock pillars and a natural arch, reached down a shaft from the tunnel. Each has a mood:
+a **brine river** (a glowing green sheet over the floor, green haze), a **lava lake** (deep down; crusted, flowing,
+red, lighting the cavern from below) or a **bioluminescent cove** (blue, crystals everywhere, a great glowing growth in
+the middle). Lighting in caves: up to 12 point lights, the cave's glow fills the dark and tints the haze, and the water
+keeps the cave's colours. `/tp cavern` takes you to the nearest one.
+
 ### Above the surface
 
 Swim up and your head comes out of the water (in creative you can fly up to 160 m): a sky with sun and clouds, and the

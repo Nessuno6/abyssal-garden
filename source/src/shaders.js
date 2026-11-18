@@ -489,7 +489,7 @@ const WK = array<vec3f, 10>(vec3f(1., 2., 1.), vec3f(-2., 1., .9), vec3f(3., 1.,
 const S_G = /*wgsl*/`
 struct G { vp: mat4x4f, sm: mat4x4f, cam: vec4f, right: vec4f, up: vec4f, fwd: vec4f, sun: vec4f, res: vec4f, mis: vec4f, wrap: vec4f, fog: vec4f, wat: vec4f, son: vec4f, sb: vec4f, sbh: vec4f,
   cav: vec4f, cm: array<vec4f, 8>, cl: array<vec4f, 8>, cc: array<vec4f, 8>,
-  env: vec4f, sky: vec4f, sunc: vec4f, exp: vec4f };
+  env: vec4f, sky: vec4f, sunc: vec4f, exp: vec4f, cl2: array<vec4f, 4>, cc2: array<vec4f, 4>, cvf: vec4f, cvp: vec4f };
 const SIG = vec3f(.058, .0235, .0195);
 const KD = vec3f(.056, .0245, .0170);
 const WCOL = vec3f(.16, .58, .90);
@@ -511,10 +511,13 @@ fn cavL(p: vec3f, n: vec3f) -> vec3f {
   var s = vec3f(0.);
   let nl = i32(g.cav.y);
   for (var i = 0; i < nl; i++) {
-    let L = g.cl[i]; let v = L.xyz - p; let d2 = dot(v, v); let rr = L.w * L.w;
-    if (d2 < rr) { let d = sqrt(d2); let f = 1. - d2 / rr; s += g.cc[i].rgb * (f * f / (1. + d2 * .012)) * sat(dot(n, v / max(d, .001)) * .7 + .3); }
+    var L = vec4f(0.); var C = vec3f(0.);
+    if (i < 8) { L = g.cl[i]; C = g.cc[i].rgb; } else { L = g.cl2[i - 8]; C = g.cc2[i - 8].rgb; }
+    let v = L.xyz - p; let d2 = dot(v, v); let rr = L.w * L.w;
+    if (d2 < rr) { let d = sqrt(d2); let f = 1. - d2 / rr; s += C * (f * f / (1. + d2 * .006)) * sat(dot(n, v / max(d, .001)) * .7 + .3); }
   }
-  return s;
+  // the glow of the cave you are in fills the dark, more from below (a lava lake, a brine river)
+  return s + g.cvf.rgb * (.55 + .45 * sat(-n.y + .4));
 }
 // signed distance to the nearest cave mouth (capsules g.cm: a.xyz + radius, b.xyz), g.cav.w of them; < 0 inside
 fn mouthD(p: vec3f) -> f32 {
@@ -676,7 +679,11 @@ fn fog(c: vec3f, wp: vec3f, z: f32) -> vec3f {
   let v = wp - g.cam.xyz; let d = length(v); let rd = v / d; let ds = d * g.fog.y * g.wat.w;
   // above the surface: a light sea haze (anything under the water is behind the opaque surface)
   if (g.cam.y > 0.) { let a = exp(-d * .0004 * (1. + 3. * g.env.w)); return c * a + skyC(vec3f(rd.x, max(rd.y, .02), rd.z)) * .75 * (1. - a); }
-  return c * exp(-sg(z) * ds) * ss(g.fog.x, g.fog.x * .8, d) + fogIn(g.cam.xyz, rd, ds, z, g.sun.xyz) * (.92 - .26 * z);
+  // in caves the haze takes the colour of the cave's glow (and of a brine river's surface when you look across it)
+  let hz = 1. - exp(-ds * .008);
+  // inside a cavern the water keeps the cave's own colours (lava stays red, brine green): less of the blue-green tint
+  let sgc = mix(sg(z), vec3f(dot(sg(z), vec3f(.333))), sat(length(g.cvf.rgb) * 14.));
+  return c * exp(-sgc * ds) * ss(g.fog.x, g.fog.x * .8, d) + fogIn(g.cam.xyz, rd, ds, z, g.sun.xyz) * (.92 - .26 * z) + g.cvf.rgb * .9 * hz;
 }
 fn qrot(q: vec4f, v: vec3f) -> vec3f { return v + 2. * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 `;
@@ -700,7 +707,7 @@ struct VO { @builtin(position) cp: vec4f, @location(0) wp: vec3f, @location(1) n
   // the things growing in them (d.w = daylight there)
   if (i.d.x > 98.5) {
     let th = i.d.x - 99.;
-    o.ao = 1.; o.bio = vec4f(0., 0., select(0., .8, th < .5), i.n.w); o.bio2 = vec4f(0., select(0., .8, th > .5 && th < 1.5), select(0., 1., th > 1.5), 2.);
+    o.ao = 1.; o.bio = vec4f(0., 0., select(0., .8, th < .5 || th > 3.5), i.n.w); o.bio2 = vec4f(th * .25, select(0., .8, th > .5 && th < 1.5), select(0., 1., th > 1.5 && th < 2.5), 2.);
   } else if (i.d.x > 97.5) { o.bio.w = i.d.w; o.bio2.w = 1.; }
   return o;
 }
@@ -759,7 +766,8 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
   let sk2 = textureSample(tD, sR, vec2f((i.op.x - i.op.z) * 1.1, i.op.y * .11));
   let spt = textureSample(tD, sR, i.op.xz * 2.3 + sd * 7.).a; // fungus cap spots (sampled outside the material branches: uniform control flow)
   let gm = i.bio;
-  let occ = gm.w;
+  let pool = i.bio2.w > 1.5 && gm.w < -.5; // a cavern's lava lake or brine river
+  let occ = max(gm.w, 0.);
   let ca = caus(i.wp, dist);
   let hgt = A.h * .5 + B.h * .35 + C.h * .15;
   var bump = 1.7; var gloss = .1; var alb = vec3f(0.); var emi = vec3f(0.); var vao = 1.; var flu = 0.;
@@ -874,13 +882,22 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
   // in caves daylight only reaches near the mouths (occ); the walls glow with the cave's theme colour
   let E = sunE(i.wp.y, z) * shadow9(i.wp + n0 * .35) * select(1., occ * occ, i.bio2.w > .5);
   if (cwall) {
-    let tc = select(select(vec3f(.25, 1., .8), vec3f(.8, .3, 1.), gm.z > .3), vec3f(1., .38, .07), i.bio2.z > .5);
+    let th = i32(i.bio2.x * 4. + .5);
+    var tc = vec3f(.8, .3, 1.);
+    if (th == 1) { tc = vec3f(.25, 1., .8); } else if (th == 2) { tc = vec3f(1.1, .12, .015); } else if (th == 3) { tc = vec3f(.35, 1., .3); } else if (th == 4) { tc = vec3f(.35, .5, 1.); }
     // glowing growths in patches (large-scale patterns only: the small detail textures would show their tiling)
     let spots = ss(.76, .8, big2 * .6 + A.h * .5) * ss(.45, .75, A.c) * ss(.3, .6, hgt);
     let moss = flt * ss(.62, .72, big * .7 + A.c * .4) * ss(.5, .7, B.h);
     emi += tc * (spots * .55 + moss * .12) * (1. - occ) * (.8 + .2 * sin(g.cam.w * .9 + big * 30.));
     alb *= .75;
     bump = .6; sgro = 0.;
+    if (pool) {
+      // lava: crusted, flowing, bright in its cracks; brine: a soft glowing green sheet with slow ripples
+      let flow = big * .6 + A.h * .5 + .08 * sin(g.cam.w * .4 + big2 * 9.);
+      if (th == 2) { alb = vec3f(.04, .015, .008); emi = vec3f(.55, .045, .004) * (.25 + 1.2 * ss(.45, .62, flow)) + vec3f(.8, .2, .02) * ss(.66, .7, flow) * .7; } // dim and red: the deep-water exposure and the tone map push bright lava to yellow
+      else { alb = vec3f(.02, .08, .04); emi = vec3f(.14, .7, .3) * (.45 + .35 * sin(g.cam.w * .7 + flow * 12.) * .5 + .3 * B.h); }
+      bump = .15;
+    }
   }
   let ndl = sat(dot(N, L));
   let am = (amb(i.wp, N, sky, z) + side(i.wp, N, open, z)) * ao + lamp(i.wp, N) * (1. - ao); // the lamp reaches into occluded places
@@ -890,7 +907,7 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
   c += E * (.25 + ca) * pow(sat(dot(N, H)), mix(10., 70., gloss)) * gloss * ndl * 1.8;
   c += (amb(i.wp, reflect(-V, N), sky, z) + side(i.wp, reflect(-V, N), open, z)) * ao * (.08 + gloss) * .6 * pow(1. - sat(dot(N, V)), 2.5);
   // the seabed opens at cave mouths
-  if (i.bio2.w < -.5 && mouthD(i.wp) < -.3) { discard; }
+  if (i.bio2.w < -.5 && mouthD(i.wp) < -.6) { discard; }
   // lit by the local biome, fogged by the camera's (so distant terrain melts into the same background)
   return fin(fog(c, i.wp, zone(i.wp)));
 }

@@ -90,6 +90,7 @@ function conRun(line) {
     case 'tp': {
       if (a[0] === 'leviathan') { toLeviathan(); return 'jumped to ' + jumpName; }
       if (a[0] === 'cave') { toCave(); return 'jumped to ' + jumpName; }
+      if (a[0] === 'cavern') { toCave(true); const S = findCave(F[CX], F[CZ], true); return 'jumped to ' + jumpName; }
       if (a[0] === 'surface') { F[CY] = YTOP(); F[PIT] = 0.15; return 'at the surface'; }
       if (a[0] === 'landmark') { jump(7); return 'jumped to ' + jumpName; }
       if (a[0] === 'structure') { jump(8); return 'jumped to ' + jumpName; }

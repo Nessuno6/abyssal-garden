@@ -54,8 +54,8 @@ const tCX = tex(CM + 1, CM + 1, 'rgba8unorm', TU.STORAGE_BINDING | TU.TEXTURE_BI
 const arrView = (t) => t.createView({ dimension: '2d-array' });
 
 // uniforms (layouts in shaders.js)
-const UB = new Float32Array(200), UBS = new Float32Array(200); // G: 50 vec4 (sonar pulse, your sub's hull box, caves, sky, blast)
-const ubo = ebuf(800, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(800, BU.UNIFORM | BU.COPY_DST);
+const UB = new Float32Array(240), UBS = new Float32Array(240); // G: 60 vec4 (sonar pulse, your sub's hull box, caves, sky, blast, cave lights 9-12, cave fill)
+const ubo = ebuf(960, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(960, BU.UNIFORM | BU.COPY_DST);
 // caves (cave.js): 3 resident systems, each with a fixed share of one vertex / index buffer and one instance record
 const CV_SLOTS = 3, CV_VCAP = 200000, CV_ICAP = 600000, cvVB = ebuf(CV_SLOTS * CV_VCAP * 16, BU.VERTEX | BU.COPY_DST), cvIB = ebuf(CV_SLOTS * CV_ICAP * 4, BU.INDEX | BU.COPY_DST);
 const CVI = new Float32Array(CV_SLOTS * 16), cvInst = ebuf(CV_SLOTS * 64, BU.VERTEX | BU.COPY_DST), CVSLOT = new Array(CV_SLOTS).fill(null);
@@ -829,7 +829,7 @@ function render() {
   skyUniforms(m); // time of day and weather
   wpnUniforms(m); // missile blasts
   caveUniforms(m);
-  for (let i = 32; i < 200; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
+  for (let i = 32; i < 240; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
   // frustum planes in render space, from the rows of the view-projection (reversed, infinite depth: no far plane)
   for (let p = 0; p < 5; p++) {
     const a = p >> 1, sg = p & 1 ? -1 : 1, o = p * 4;
@@ -1105,8 +1105,8 @@ function place(x, z, lookX, lookZ, lift = 7) {
 // so it swims past you (its path is known exactly: same formula as vsLev)
 let levTurn = 0;
 // the nearest cave: in front of its mouth, looking in (it is meshed on the spot)
-function toCave() {
-  const S = findCave(F[CX], F[CZ]); if (!S) return;
+function toCave(cavern = false) {
+  const S = findCave(F[CX], F[CZ], cavern); if (!S) return;
   caveNow(S);
   const M = S.mouths[0], g = M.g, dx = M.b[0] - M.a[0], dz = M.b[2] - M.a[2], l = hypot(dx, dz) || 1;
   // above and in front of the mouth, high enough to clear the ground around it, looking down into it

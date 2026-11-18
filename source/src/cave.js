@@ -10,10 +10,10 @@
 // by the rock shader with the daylight that reaches each vertex (n.w) and the cave's theme (fungus, crystal, lava).
 // Things grow on the walls (giant glowing fungi, crystals, vent chimneys, rocks) and the brightest of them light the
 // cave: the 8 nearest are point lights in G (cavL). Collision: sdScene() takes the cave as water (caveWater).
-const CAVE_CELL = 640, CVS = new Map(), CV_CS = LV > 1 ? 3.2 : 2.5, CV_B = 16, CV_AMP = 4, CV_LIP = 0.6;
+const CAVE_CELL = 640, CVS = new Map(), CV_CS = LV > 1 ? 3.2 : 2.5, CV_B = 16, CV_AMP = 4, CV_LIP = -0.35; // the walls stop just under the seabed: no rim above it (the GPU hole is a little smaller)
 const CVR = []; // the systems with a finished mesh
 let cvGenS = null, cvGenI = null; // the one being meshed
-const CAVE_THEMES = ['glowing fungus', 'crystal', 'lava'];
+const CAVE_THEMES = ['glowing fungus', 'crystal', 'lava', 'brine river', 'bioluminescent cove'];
 
 // small local random stream (the shared rnd() belongs to the load-time generators)
 function cvRand(s) { let a = s | 0; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
@@ -108,7 +108,24 @@ function caveSys(gx, gz) {
     for (let k = 0; k < 3; k++) { const a = k * 2.1 + R(), o = Rr * 0.38; const q = [c[0] + cos(a) * o, y + (R() - 0.5) * Rr * 0.3, c[2] + sin(a) * o]; add(q, q, Rr * (0.62 + 0.15 * R()), 1.25); }
   };
   const mid = path[path.length >> 1];
-  room(mid, 30 + 18 * R());
+  // a giant cavern instead of the chamber, 40 % of systems: a hall 140-220 m across and about 100 m high, deep under
+  // the rock, made of flattened lobes, with rock pillars and a natural arch across it, joined to the tunnel by a shaft
+  const rocks = []; let cav = null;
+  if (R() < 0.4) {
+    const Rh = 70 + 40 * R(), H = 42 + 18 * R();
+    const cx = clamp(mid[0], x0 + Rh, x0 + W - Rh), cz = clamp(mid[2], z0 + Rh, z0 + W - Rh);
+    const top = cvLow(cx, cz, Rh * 0.8) - 28;
+    let cy = top - H; if (cy - H < -480) cy = -480 + H;
+    if (cy + H < top + 1 && Rh * 2 < W) {
+      cav = { x: cx, y: cy, z: cz, Rh, H };
+      for (let k = 0; k < 6; k++) { const a = k * 1.05 + R() * 0.6, o = k ? Rh * (0.3 + 0.2 * R()) : 0; const q = [cx + cos(a) * o, cy + (R() - 0.5) * H * 0.3, cz + sin(a) * o]; add(q, q, Rh * (0.55 + 0.12 * R()), Rh / H); }
+      add(mid, [cx + (mid[0] - cx) * 0.4, cy + H * 0.55, cz + (mid[2] - cz) * 0.4], r * 0.95, 1.1); // the shaft down from the tunnel
+      for (let k = 0, n = 2 + (R() * 3 | 0); k < n; k++) { const a = R() * TAU, o = Rh * (0.25 + 0.35 * R()), x = cx + cos(a) * o, z = cz + sin(a) * o; rocks.push([x, cy - H * 1.2, z, x, cy + H * 1.2, z, 6 + 6 * R()]); }
+      const a = R() * TAU, ay = cy + H * (0.05 + 0.35 * R()); rocks.push([cx - cos(a) * Rh * 0.9, ay, cz - sin(a) * Rh * 0.9, cx + cos(a) * Rh * 0.9, ay + (R() - 0.5) * 10, cz + sin(a) * Rh * 0.9, 6 + 4 * R()]);
+      chambers.push([cx, cy, cz, Rh]);
+    }
+  }
+  if (!cav) room(mid, 30 + 18 * R());
   // a side passage to a dead-end grotto, 45 % of systems
   if (R() < 0.45) {
     const sgn = R() < 0.5 ? -1 : 1, L = 110 + 60 * R();
@@ -126,12 +143,14 @@ function caveSys(gx, gz) {
       room([ex, ey, ez], Rg);
     }
   }
-  S.ok = true; S.r = r; S.segs = new Float64Array(segs); S.n = segs.length / 8; S.mouths = [mA, mB]; S.chambers = chambers;
+  S.ok = true; S.r = r; S.segs = new Float64Array(segs); S.n = segs.length / 8; S.mouths = [mA, mB]; S.chambers = chambers; S.cav = cav; S.rocks = rocks;
   S.ox = (gx + 0.5) * CAVE_CELL; S.oz = (gz + 0.5) * CAVE_CELL;
   let lo = 1e9, hi = -1e9, sum = 0;
   for (let i = 0; i < S.n; i++) { const o = i * 8; lo = min(lo, S.segs[o + 1] - S.segs[o + 6], S.segs[o + 4] - S.segs[o + 6]); hi = max(hi, S.segs[o + 1] + S.segs[o + 6], S.segs[o + 4] + S.segs[o + 6]); sum += S.segs[o + 1]; }
   S.ylo = lo - CV_AMP - 6; S.yhi = hi + CV_AMP + 6;
   S.theme = sum / S.n < -250 ? 2 : R() < 0.5 ? 0 : 1;
+  // caverns: a lava lake in the deep; else a river of glowing brine or a bioluminescent cove
+  if (cav) { S.theme = cav.y < -290 ? 2 : R() < 0.55 ? 3 : 4; if (S.theme !== 4) cav.pool = cav.y - cav.H * 0.62; }
   S.seed = R();
   S.all = new Int32Array(S.n).map((_, i) => i);
   return S;
@@ -156,6 +175,13 @@ function cvField(S, list, n, x, y, z) {
     let a = CV_AMP;
     for (const m of S.mouths) { const g = m.g; a *= sstep(S.r * 1.25, S.r * 2.6, hypot(x - g[0], y - g[1], z - g[2])); }
     d += a * cvNoise(x, y, z);
+  }
+  // rock inside a cavern: pillars floor to ceiling, an arch across (lumpy)
+  for (const k of S.rocks) {
+    const ax = k[0], ay = k[1], az = k[2], bx = k[3] - ax, by = k[4] - ay, bz = k[5] - az, px = x - ax, py = y - ay, pz = z - az, bb = bx * bx + by * by + bz * bz;
+    let h = (px * bx + py * by + pz * bz) / bb; h = h < 0 ? 0 : h > 1 ? 1 : h;
+    const dr = hypot(px - bx * h, py - by * h, pz - bz * h) - k[6] * (1 + 0.35 * sin(h * 17 + k[0])) - 2.5 * cvNoise(x * 1.6, y * 1.6, z * 1.6);
+    if (-dr > d) d = -dr;
   }
   return d;
 }
@@ -205,6 +231,7 @@ function* cvMesh(S) {
     const cx = S.ox + (bx + 0.5) * BW, cy = (by + 0.5) * BW, cz = S.oz + (bz + 0.5) * BW;
     let near = abs(cvDist(S, S.all, S.n, cx, cy, cz)) < hd + CV_AMP + 2;
     for (const m of S.mouths) if (hypot(cx - m.mc[0], cy - m.mc[1], cz - m.mc[2]) < m.mh + hd + 6) near = true;
+    for (const k of S.rocks) { const bx = k[3] - k[0], by = k[4] - k[1], bz = k[5] - k[2], px = cx - k[0], py = cy - k[1], pz = cz - k[2]; let h = (px * bx + py * by + pz * bz) / (bx * bx + by * by + bz * bz); h = h < 0 ? 0 : h > 1 ? 1 : h; if (hypot(px - bx * h, py - by * h, pz - bz * h) < k[6] * 1.4 + hd + 6) near = true; }
     if (near) blocks.push([bx, by, bz]);
   }
   S.nBlocks = blocks.length;
@@ -268,6 +295,20 @@ function* cvMesh(S) {
     bn++;
     yield bn;
   }
+  // the cavern's pool: a lava lake or a glowing brine river, a flat sheet over the cavern floor (n.w = -1 marks it)
+  if (S.cav && S.cav.pool !== undefined) {
+    const C = S.cav, st = 4, py = C.pool, n = ceil(C.Rh * 2.4 / st), xs = C.x - n * st / 2, zs = C.z - n * st / 2, row = new Int32Array((n + 1) * (n + 1)).fill(-1);
+    nl = cvNear(S, C.x, py, C.z, C.Rh * 1.3, list);
+    const inside = new Uint8Array((n + 1) * (n + 1));
+    for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) inside[j * (n + 1) + i] = cvField(S, list, nl, xs + i * st, py, zs + j * st) < -0.5 ? 1 : 0;
+    const vtx = (i, j) => { const k = j * (n + 1) + i; if (row[k] >= 0) return row[k]; if (nv >= cap) grow(); pos[nv * 3] = xs + i * st - S.ox; pos[nv * 3 + 1] = py; pos[nv * 3 + 2] = zs + j * st - S.oz; nrm[nv * 4] = 0; nrm[nv * 4 + 1] = 127; nrm[nv * 4 + 2] = 0; nrm[nv * 4 + 3] = -127; return (row[k] = nv++); };
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const a = j * (n + 1) + i; if (!(inside[a] || inside[a + 1] || inside[a + n + 1] || inside[a + n + 2])) continue;
+      if (ni + 6 > idx.length) growI();
+      const p0 = vtx(i, j), p1 = vtx(i + 1, j), p2 = vtx(i + 1, j + 1), p3 = vtx(i, j + 1);
+      idx[ni++] = p0; idx[ni++] = p1; idx[ni++] = p2; idx[ni++] = p0; idx[ni++] = p2; idx[ni++] = p3;
+    }
+  }
   S.nv = nv; S.ni = ni;
   const vb = new ArrayBuffer(nv * 16), vf = new Float32Array(vb), vi = new Int8Array(vb);
   for (let v = 0; v < nv; v++) { vf[v * 4] = pos[v * 3]; vf[v * 4 + 1] = pos[v * 3 + 1]; vf[v * 4 + 2] = pos[v * 3 + 2]; for (let q = 0; q < 4; q++) vi[v * 16 + 12 + q] = nrm[v * 4 + q]; }
@@ -283,7 +324,7 @@ function* cvMesh(S) {
 const CV_GLOW = { fungusPink: [1, 0.3, 0.9], fungusTeal: [0.25, 1, 0.85], cyan: [0.22, 0.95, 1], amber: [1, 0.6, 0.16], violet: [0.72, 0.32, 1], lava: [1, 0.32, 0.05] };
 function cvDecor(S) {
   const R = cvRand(S.seed * 4294967296 + 77), P = S.pos, Nn = S.nrm, nv = S.nv, items = [], lights = [];
-  const want = clamp((nv / 70) | 0, 40, 150);
+  const want = clamp((nv / 70) | 0, 40, S.cav ? 260 : 150);
   const qUp = (nx, ny, nz, spin) => {
     const ax = nz, az = -nx, l = hypot(ax, az), ang = Math.acos(clamp(ny, -1, 1));
     const q = l < 1e-4 ? (ny > 0 ? [0, 0, 0, 1] : [1, 0, 0, 0]) : qAxis(ax, 0, az, ang);
@@ -292,7 +333,7 @@ function cvDecor(S) {
   const seedIn = (mul, lo, hi) => { const n = floor(R() * floor(mul - hi + 0.999)); return (n + lo + (hi - lo) * R()) / mul; };
   for (let t = 0; t < want * 4 && items.length < want; t++) {
     const v = (R() * nv) | 0, op = Nn[v * 4 + 3] / 127;
-    if (op > 0.3) continue;
+    if (op > 0.3 || op < -0.5) continue; // not near the mouths, not on the pool
     let nx = Nn[v * 4] / 127, ny = Nn[v * 4 + 1] / 127, nz = Nn[v * 4 + 2] / 127;
     const x = P[v * 3] + S.ox, y = P[v * 3 + 1], z = P[v * 3 + 2] + S.oz;
     let near = false; for (const L of items) if (abs(L.x - x) < 7 && abs(L.z - z) < 7 && abs(L.y - y) < 7) { near = true; break; }
@@ -305,6 +346,14 @@ function cvDecor(S) {
       else { k = 12; mesh = (R() * 4) | 0; mat = 1; sc = 1.5 + 3 * R(); sink = 0.45; }
     } else if (S.theme === 1) { // crystal caves: clusters everywhere, mostly cyan with some amber
       if (r < 0.75) { k = 7; mesh = 27; mat = 7; sc = (ceil_ ? 1.4 : 1.6) + 3 * R(); seed = R() < 0.8 ? seedIn(2.9, 0.02, 0.53) : seedIn(2.9, 0.57, 0.8); glow = fract(seed * 2.9) < 0.55 ? CV_GLOW.cyan : CV_GLOW.amber; rad = 2.5 * sc; }
+      else { k = 12; mesh = (R() * 4) | 0; mat = 1; sc = 1.5 + 3 * R(); sink = 0.45; }
+    } else if (S.theme === 3) { // brine river: tall amber-tipped spires on the banks, teal fungi
+      if (floorV && r < 0.5) { k = 7; mesh = 27; mat = 7; sc = 2.5 + 4 * R(); seed = seedIn(2.9, 0.57, 0.8); glow = CV_GLOW.amber; rad = 2.5 * sc; nx *= 0.4; nz *= 0.4; ny = 1; }
+      else if (floorV && r < 0.75) { k = 5; mesh = 23; mat = 6; sc = 1.2 + 2 * R(); seed = seedIn(3.7, 0.52, 0.98); glow = CV_GLOW.fungusTeal; rad = 2.6 * sc; }
+      else { k = 12; mesh = (R() * 4) | 0; mat = 1; sc = 2 + 4 * R(); sink = 0.45; }
+    } else if (S.theme === 4) { // bioluminescent cove: violet and blue crystals everywhere, pink fungi
+      if (r < 0.6) { k = 7; mesh = 27; mat = 7; sc = 1.5 + 3 * R(); seed = R() < 0.6 ? seedIn(2.9, 0.84, 0.98) : seedIn(2.9, 0.02, 0.53); glow = fract(seed * 2.9) > 0.82 ? CV_GLOW.violet : CV_GLOW.cyan; rad = 2.5 * sc; }
+      else if (floorV && r < 0.85) { k = 5; mesh = 23; mat = 6; sc = 1.4 + 2.2 * R(); seed = seedIn(3.7, 0.02, 0.48); glow = CV_GLOW.fungusPink; rad = 2.6 * sc; }
       else { k = 12; mesh = (R() * 4) | 0; mat = 1; sc = 1.5 + 3 * R(); sink = 0.45; }
     } else { // lava: vent chimneys on the floor, amber crystals on the walls
       if (floorV && r < 0.5) { k = 8; mesh = 28; mat = 8; sc = 1.4 + 1.8 * R(); glow = CV_GLOW.lava; rad = 3.6 * sc; nx *= 0.3; nz *= 0.3; ny = 1; }
@@ -337,6 +386,17 @@ function cvDecor(S) {
     const c = S.theme === 0 ? CV_GLOW.fungusPink : S.theme === 1 ? CV_GLOW.cyan : CV_GLOW.lava, a = M.a, b = M.b;
     lights.push({ x: a[0] + (b[0] - a[0]) * 0.65, y: a[1] + (b[1] - a[1]) * 0.65, z: a[2] + (b[2] - a[2]) * 0.65, rad: 34, c, i: 1.6 });
   }
+  // the cavern's pool lights it from below; the cove gets a great glowing growth in the middle of its floor
+  if (S.cav) {
+    const C = S.cav;
+    if (C.pool !== undefined) for (let t = 0; t < 26; t++) { const a = R() * TAU, o = sqrt(R()) * C.Rh * 0.8; lights.push({ x: C.x + cos(a) * o, y: C.pool + 3, z: C.z + sin(a) * o, rad: 48, c: S.theme === 2 ? [1, 0.36, 0.06] : [0.3, 1, 0.42], i: S.theme === 2 ? 1.6 : 0.9 }); }
+    if (S.theme === 4) {
+      const fy = C.y - C.H * 0.75;
+      for (let k = 0; k < 9; k++) { const a = k * 0.7, lean = k ? 0.35 + 0.25 * R() : 0, sc = k ? 6 + 5 * R() : 14, q = qMul(qAxis(0, 1, 0, a), qAxis(1, 0, 0, lean));
+        items.push({ k: 7, x: C.x + cos(a) * (k ? 3 : 0), y: fy, z: C.z + sin(a) * (k ? 3 : 0), q, sc, rad: 2.5 * sc, mesh: 27, mat: 7, seed: k % 2 ? seedIn(2.9, 0.84, 0.98) : seedIn(2.9, 0.02, 0.4), yaw: a, cv: true, open: 0 }); }
+      lights.push({ x: C.x, y: fy + 25, z: C.z, rad: 90, c: [0.45, 0.35, 1], i: 2.2 });
+    }
+  }
   // lava caves: glowing pools on the floor, no object needed
   if (S.theme === 2) for (let t = 0; t < 30; t++) { const v = (R() * nv) | 0; if (Nn[v * 4 + 1] > 90) lights.push({ x: P[v * 3] + S.ox, y: P[v * 3 + 1] + 2, z: P[v * 3 + 2] + S.oz, rad: 22, c: CV_GLOW.lava, i: 1.2 }); }
   S.decor = items; S.lights = lights;
@@ -345,7 +405,7 @@ function cvDecor(S) {
 // ---------------------------------------------------------------- per frame
 // Mesh the nearest unmeshed system within reach (a few ms per frame), drop the far ones, and fill the cave part of G.
 const CV_SEGL = new Int32Array(4096);
-let cvEnc = 0;
+let cvEnc = 0, cvIn = null;
 function caveTick(budget) {
   const cx = F[CX], cy = F[CY], cz = F[CZ];
   const g0 = floor((cx - 900) / CAVE_CELL), g1 = floor((cx + 900) / CAVE_CELL), h0 = floor((cz - 900) / CAVE_CELL), h1 = floor((cz + 900) / CAVE_CELL);
@@ -370,7 +430,8 @@ function caveTick(budget) {
   // inside a cave? (the camera under the seabed, in a cave's water)
   const hg = hAt(cx, cz);
   let enc = 0;
-  if (cy < hg - 1) { const w = caveWater(cx, cy, cz, false); if (w > -2) enc = sstep(0, 22, hg - cy); }
+  cvIn = null;
+  if (cy < hg - 1) { const w = caveWater(cx, cy, cz, false); if (w > -2) { enc = sstep(0, 22, hg - cy); for (const S of CVR) if (abs(cx - S.ox) < CAVE_CELL * 0.6 && abs(cz - S.oz) < CAVE_CELL * 0.6) cvIn = S; } }
   cvEnc += (enc - cvEnc) * (1 - exp(-FDT * 2.5));
 }
 // G: cav (inside, lights, -, mouths), cm[8] (4 mouth capsules), cl[8] / cc[8] (8 lights)
@@ -395,13 +456,18 @@ function caveUniforms(m) {
   }
   for (const L of WLIGHTS) CVL.push([hypot(L.x - cx, L.y - cy, L.z - cz) * 0.25, L]); // missiles and blasts first
   CVL.sort((a, b) => a[0] - b[0]);
-  const nl = min(8, CVL.length);
+  const nl = min(12, CVL.length);
   for (let i = 0; i < nl; i++) {
-    const [d, L] = CVL[i], o = 120 + i * 4, c = 152 + i * 4, f = sstep(110, 80, d) * L.i * (0.92 + 0.08 * sin(F[TIME] * 1.3 + L.x));
+    const [d, L] = CVL[i], o = i < 8 ? 120 + i * 4 : 200 + (i - 8) * 4, c = i < 8 ? 152 + i * 4 : 216 + (i - 8) * 4, f = sstep(110, 80, d) * L.i * (0.92 + 0.08 * sin(F[TIME] * 1.3 + L.x));
     m[o] = L.x - cx; m[o + 1] = L.y; m[o + 2] = L.z - cz; m[o + 3] = L.rad;
     m[c] = L.c[0] * f; m[c + 1] = L.c[1] * f; m[c + 2] = L.c[2] * f; m[c + 3] = 0;
   }
   m[84] = cvEnc; m[85] = nl; m[86] = 0; m[87] = nm;
+  // the cave you are in: its glow fills the dark (cvf) and tints the haze; its pool (cvp: level, kind 1 lava 2 brine)
+  const FILL = [[0.035, 0.012, 0.05], [0.01, 0.035, 0.04], [0.09, 0.025, 0.006], [0.012, 0.06, 0.025], [0.015, 0.025, 0.075]];
+  let fc = [0, 0, 0], pool = -1e4, pk = 0;
+  if (cvIn) { const S = cvIn, f = FILL[S.theme] || FILL[0], k = cvEnc * (S.cav && hypot(cx - S.cav.x, cz - S.cav.z) < S.cav.Rh * 1.2 ? 1.6 : 0.8); fc = f.map((v) => v * k); if (S.cav && S.cav.pool !== undefined) { pool = S.cav.pool; pk = S.theme === 2 ? 1 : 2; } }
+  m[232] = fc[0]; m[233] = fc[1]; m[234] = fc[2]; m[235] = 0; m[236] = pool; m[237] = pk; m[238] = 0; m[239] = 0;
 }
 // how far a point is inside a cave's water (> 0 inside), over the meshed systems; with grad, its gradient in GR
 function caveWater(x, y, z, grad) {
@@ -441,14 +507,14 @@ function caveMouthNear(x, z, rad) {
   return false;
 }
 // the nearest cave system (spiralling out over cells), for Go to and /cave
-function findCave(fx, fz) {
+function findCave(fx, fz, cavern = false) {
   const c0 = floor(fx / CAVE_CELL), c1 = floor(fz / CAVE_CELL);
   for (let r = 0; r < 40; r++) {
     let best = null, bd = 1e18;
     for (let gz = c1 - r; gz <= c1 + r; gz++) for (let gx = c0 - r; gx <= c0 + r; gx++) {
       if (max(abs(gx - c0), abs(gz - c1)) !== r) continue;
       const S = caveSys(gx, gz);
-      if (!S.ok) continue;
+      if (!S.ok || (cavern && !S.cav)) continue;
       const d = hypot(S.mouths[0].g[0] - fx, S.mouths[0].g[2] - fz);
       if (d > 60 && d < bd) { bd = d; best = S; }
     }
