@@ -9,3 +9,7 @@ release/
 # local reference clone of the original project and local tool settings
 _upstream/
 .claude/
+
+# the custom player character: no licence for redistribution, kept local (the build uses it when present)
+source/assets/player_custom.glb
+source/assets/player_custom.blend

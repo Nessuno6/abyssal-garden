@@ -74,7 +74,7 @@ function netButtons() {
 function netSend(force) {
   const ws = NET.ws;
   if (!ws || ws.readyState !== 1) return;
-  const m = { t: NET.mode === 1 ? 'w' : 'p', n: NET.name, p: [+F[CX].toFixed(2), +F[CY].toFixed(2), +F[CZ].toFixed(2), +F[YAW].toFixed(3), +F[PIT].toFixed(3)] };
+  const m = { t: NET.mode === 1 ? 'w' : 'p', n: NET.name, ch: SAVE.char || 'diver', p: [+F[CX].toFixed(2), +F[CY].toFixed(2), +F[CZ].toFixed(2), +F[YAW].toFixed(3), +F[PIT].toFixed(3)] };
   if (NET.mode === 1) {
     m.s = WSEED; m.tm = +F[TIME].toFixed(3); m.lev = []; m.mm = NET.manifest || (NET.manifest = netManifest());
     for (let i = 0; i < NLEV; i++) { for (let k = 0; k < 4; k++) m.lev.push(+LEV[i * 4 + k].toFixed(2)); for (let k = 0; k < 8; k++) m.lev.push(LB.lev[i * 8 + k]); }
@@ -96,7 +96,7 @@ function netMessage(s) {
     P = { x: m.p[0], y: m.p[1], z: m.p[2], yaw: m.p[3], pit: m.p[4], t: 0, tag: null, L: { k: 99, mesh: DIVER_MESH, mat: 10, sc: 1, seed: 0, rad: 2, x: 0, y: 0, z: 0, q: [0, 0, 0, 1] } };
     NET.peers.set(id, P); netDescribe();
   }
-  P.tp = m.p; P.t = performance.now(); subNetIn(P, m); P.n = String(m.n || 'Diver').slice(0, 16); P.L.seed = nameHue(P.n); P.host = m.t === 'w';
+  P.tp = m.p; P.t = performance.now(); subNetIn(P, m); P.n = String(m.n || 'Diver').slice(0, 16); P.ch = m.ch === 'custom' ? 'custom' : 'diver'; P.L.seed = nameHue(P.n); P.host = m.t === 'w';
   if (P.host && NET.mode === 2) netFromHost(m);
 }
 function netOther(m) {

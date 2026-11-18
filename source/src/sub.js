@@ -73,10 +73,19 @@ function subStep(dt) {
   else if (!SUBM.ride && SUBM.mode !== 'passenger') subDrift(dt, hb);
   // where you are: the pilot's eye, a passenger seat, or walking the command centre
   if (SUBM.mode === 'pilot' && THIRD) {
-    const fw = [sin(SUBM.yaw) * cos(SUBM.pit), sin(SUBM.pit), -cos(SUBM.yaw) * cos(SUBM.pit)], d = SUB_LEN * 0.95;
-    F[CX] = SUBM.x - fw[0] * d; F[CY] = min(SUBM.y - fw[1] * d + SUB_LEN * 0.28, -0.6); F[CZ] = SUBM.z - fw[2] * d;
+    // behind and well above the hull, so you look over it (and see what you fire); pulled in when rock is in the way
+    fpWas = false;
+    const fw = [sin(SUBM.yaw) * cos(SUBM.pit), sin(SUBM.pit), -cos(SUBM.yaw) * cos(SUBM.pit)], D = SUB_LEN * 0.95, H = SUB_LEN * 0.36;
+    let d = D;
+    const nd = nDyn; nDyn = 0;
+    for (let k = 1; k <= 10; k++) { const t = k / 10; if (sdScene(SUBM.x - fw[0] * D * t, SUBM.y - fw[1] * D * t + H * t, SUBM.z - fw[2] * D * t) < 1.5) { d = D * (k - 1) / 10; break; } }
+    nDyn = nd;
+    SUBM.camD = SUBM.camD === undefined ? d : SUBM.camD + (d - SUBM.camD) * (d < SUBM.camD ? 1 : 1 - exp(-dt * 2));
+    const t = SUBM.camD / D;
+    F[CX] = SUBM.x - fw[0] * SUBM.camD; F[CY] = min(SUBM.y - fw[1] * SUBM.camD + H * t, YTOP() + 0.6); F[CZ] = SUBM.z - fw[2] * SUBM.camD;
   } else if (SUBM.mode === 'pilot' || SUBM.mode === 'passenger') {
     const p = subW(T, mark(SUBM.mode === 'pilot' ? 'pilot_seat' : 'passenger_' + (SUBM.seat + 1))); F[CX] = p[0]; F[CY] = p[1]; F[CZ] = p[2];
+    if (SUBM.mode === 'pilot' && !SUBM.ride) pilotEye(T);
   } else subWalk(dt, T);
   F[VX] = F[VY] = F[VZ] = 0;
   subPrompt(T);
@@ -88,7 +97,9 @@ function subDrive(dt, C, hb) {
   let dy = F[YAW] - SUBM.yaw; dy -= Math.round(dy / TAU) * TAU;
   const turn = clamp(dy, -1, 1) * 2.6 * k / max(dt, 1e-3) * dt;
   SUBM.yaw += turn; SUBM.yr = turn / max(dt, 1e-3);
-  SUBM.pit += (clamp(F[PIT] * 0.8, -0.55, 0.55) - SUBM.pit) * k;
+  // first person at the controls you look a little down at your hands and the stick: that view counts as level
+  const pv = THIRD ? 0 : FP_TILT;
+  SUBM.pit += (clamp((F[PIT] + pv) * 0.8, -0.55, 0.55) - SUBM.pit) * k;
   const wantBoost = (ks || SUBM.boostHeld) && !dead && !low && SUBM.boost > 3;
   SUBM.boosting = wantBoost; if (wantBoost) { SUBM.boost = max(0, SUBM.boost - 25 * dt); SUBM.bt = 1; }
   const sp = dead ? 1 : low ? 3 : wantBoost ? 24 : 12;
@@ -285,8 +296,43 @@ function subUniforms(m) {
   m[66] = lit ? 1 : 0; m[67] = inside && SUBM.mode !== 'pilot' || (SUBM.mode === 'pilot' && !THIRD) ? (SUBM.power > 0 || SUBM.ride ? 0.4 : 0.12) : 0;
 }
 // ------------------------------------------------------------- drawing: your sub (with its inside while aboard) and the others'
+// first person at the controls: you sit at the pilot seat (the 'drive' clip), the camera at your eyes, your hands on
+// the stick. PB = where the body goes (world), with the stick's grip, from the character's head and hands in the pose.
+const FP_TILT = 0.45, RECLINE = -0.6; // the view's tilt at the controls; the pilot seat leans back (radians)
+let fpWas = false;
+const PB = { ok: false, x: 0, y: 0, z: 0, gx: 0, gy: 0, gz: 0, t: 0 };
+function pilotEye(T) {
+  PB.ok = false; if (PLAYER < 0) return;
+  if (!fpWas) { fpWas = true; F[PIT] = -FP_TILT; } // just sat down: look at the controls
+  PB.t = SUBM.t; const clip = pclip(PLAYER, 'drive');
+  const head = modelJoint(PLAYER, /^(mixamorig:?)?head$/i, clip, PB.t) || [0, 0.3, 0.05];
+  const hl = modelJoint(PLAYER, /^(mixamorig:?)?(left.?hand|hand[._]?l)$/i, clip, PB.t), hr = modelJoint(PLAYER, /^(mixamorig:?)?(right.?hand|hand[._]?r)$/i, clip, PB.t);
+  const grip = hl && hr ? [(hl[0] + hr[0]) / 2, (hl[1] + hr[1]) / 2, (hl[2] + hr[2]) / 2] : [0, head[1] - 0.45, head[2] + 0.35];
+  // the body: its eyes (a little above and in front of the head joint) where the camera is
+  const qs = subQ(T.yaw, T.pit), q = qMul(qs, qAxis(1, 0, 0, RECLINE)), ex = head[0], ey = head[1] + 0.08, ez = head[2] + 0.16;
+  qrotInto(q[0], q[1], q[2], q[3], ex, ey, ez);
+  PB.x = F[CX] - V3[0]; PB.y = F[CY] - V3[1]; PB.z = F[CZ] - V3[2];
+  qrotInto(q[0], q[1], q[2], q[3], grip[0], grip[1], grip[2]);
+  const gx = PB.x + V3[0], gy = PB.y + V3[1], gz = PB.z + V3[2];
+  qrotInto(qs[0], qs[1], qs[2], qs[3], 0, -0.33, 0); // the stick's base: 0.33 m under the grip, upright in the sub
+  PB.gx = gx + V3[0]; PB.gy = gy + V3[1]; PB.gz = gz + V3[2];
+  PB.q = [q[0], q[1], q[2], q[3]]; PB.qs = [qs[0], qs[1], qs[2], qs[3]]; PB.ok = true;
+}
+// the stick, tilting with what you do: forward / back with the throttle, sideways with the turn
+const JOYL = { k: 12, x: 0, y: 0, z: 0, q: [0, 0, 0, 1], sc: 1, rad: 1, mesh: 0, mat: 10, seed: 0.1, free: true };
+function subJoy(add, cx, cy, cz, R) {
+  if (!PB.ok || SUBM.mode !== 'pilot' || THIRD || SUBM.ride) return;
+  const fwd = (tId >= 0 ? 0.7 : kf - kb) * 0.35, side = clamp((SUBM.yr || 0) * 0.25, -0.35, 0.35);
+  JOYL.mesh = JOY_MESH; JOYL.seed = nameHue(SAVE.nick || '');
+  JOYL.x = PB.gx; JOYL.y = PB.gy; JOYL.z = PB.gz; JOYL.q = qMul(PB.qs, qMul(qAxis(1, 0, 0, fwd), qAxis(0, 0, 1, -side)));
+  add(JOYL, cx, cy, cz, R);
+}
 function subEmit() {
   if (SUBM.m < 0) return;
+  if (PB.ok && SUBM.mode === 'pilot' && !THIRD && !SUBM.ride && PLAYER >= 0) {
+    const S = CUSTOM[PLAYER].skin, pose = S && ciPass === 1 ? poseAlloc(PLAYER, pclip(PLAYER, 'drive'), PB.t) : -2;
+    ciPut(PLAYER, PB.x, PB.y, PB.z, 1.8, PB.q[0], PB.q[1], PB.q[2], PB.q[3], 0, nameHue(SAVE.nick || ''), 0, 0, pose, PLAYER === PLAYERS.custom ? null : [1, 1, 1]);
+  }
   const C = CUSTOM[SUBM.m], aboard = SUBM.mode !== 'out' && !SUBM.ride;
   MODELS[SUBM.m].noGlass = SUBM.mode !== 'out' && !(SUBM.mode === 'pilot' && THIRD);
   const put = (T, clipT, clip, own) => {
@@ -310,9 +356,11 @@ function subHud() {
   $('subh').hidden = !show; $('sbt').hidden = !(show && SUBM.mode === 'pilot' && mob);
   if (!show) { if (SUBM.msgT > 0 && SUBM.m >= 0 && !menu) { $('submsg').hidden = false; $('submsg').textContent = SUBM.msg; } else $('submsg').hidden = true; return; }
   const T = rideT() || SUBM, own = !SUBM.ride, depth = -T.y, warn = depth > -CRUSH - 25;
-  const bar = (id, v) => { $(id).style.setProperty('--v', clamp(v, 0, 100) + '%'); $(id).dataset.v = v.toFixed(0) + ' %'; };
+  // the arcs: hull (shield), power (bolt), boost (rocket); depth and speed in the middle
+  const bar = (id, v) => { v = clamp(v, 0, 100); $(id).style.strokeDasharray = `${v.toFixed(1)} 100`; $(id + 'v').textContent = v.toFixed(0) + '%'; };
   bar('subhull', own ? SUBM.hull : T.hull ?? 100); bar('subpow', own ? SUBM.power : 100); bar('subbst', own ? SUBM.boost : 100);
-  $('subd').textContent = `Depth ${depth.toFixed(0)} m · crush ${-CRUSH} m · ${hypot(SUBM.vx, SUBM.vy, SUBM.vz).toFixed(1)} m/s${SUBM.lights ? ' · lights' : ''}${SON.on ? ' · sonar' : ''}${own ? ` · missiles ${CREATIVE ? '∞' : wpnAmmo}` : ' · passenger'}`;
+  $('subdep').textContent = `${depth.toFixed(0)} m`; $('subspd').textContent = `${hypot(SUBM.vx, SUBM.vy, SUBM.vz).toFixed(1)} m/s`;
+  $('subd').textContent = `crush ${-CRUSH} m${SUBM.lights ? ' · lights' : ''}${SON.on ? ' · sonar' : ''}${own ? ` · missiles ${CREATIVE ? '∞' : wpnAmmo}` : ' · passenger'}`;
   $('subd').className = warn ? 'warn' : '';
   $('submsg').hidden = !(SUBM.msgT > 0); $('submsg').textContent = SUBM.msg;
   // sonar screen: the seabed map turned heading-up, range rings, the sweep and the contacts it has lit

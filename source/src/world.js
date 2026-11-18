@@ -273,6 +273,7 @@ function updateLandmarks() {
   // what grows in the caves nearby
   for (const S of CVR) if (hypot(S.ox - cx, S.oz - cz) < R2 + CAVE_CELL * 0.75) for (const L of S.decor) if (abs(L.y - cy) < R2) addLM(L, cx, cy, cz, R2);
   wpnInstances(addLM, cx, cy, cz, R2); // missiles in flight
+  subJoy(addLM, cx, cy, cz, R2); // the stick at your sub's controls
   netAvatars(); // other divers (LAN multiplayer)
   // counting sort by mesh id, so each mesh is one instanced draw
   LMCNT.fill(0);
@@ -875,6 +876,10 @@ function meshTorpedo() {
   for (let k = 0; k < 4; k++) { const a = k * PI / 2, c = cos(a), s = sin(a); const p = m.v(c * 0.26, -1.3, s * 0.26, 0.1), q = m.v(c * 0.62, -1.55, s * 0.62, 0.1), r = m.v(c * 0.26, -0.75, s * 0.26, 0.1); m.tri(p, q, r); m.tri(r, q, p); }
   return m;
 }
+// the sub's control stick: a dark base, the shaft, a yellow grip with a glowing button on top (material 10 aux)
+function meshJoystick() {
+  return meshLathe([[0, 0, 0.1], [0.075, 0, 0.1], [0.08, 0.025, 0.1], [0.05, 0.045, 0.1], [0.014, 0.05, 0.1], [0.014, 0.24, 0.1], [0.032, 0.25, 0.45], [0.036, 0.33, 0.45], [0.03, 0.36, 0.45], [0.012, 0.37, 1], [0, 0.375, 1]], 12, 0, 0);
+}
 // squid: a torpedo mantle along +y with two side fins (aux 1), eight arms and two long tentacles trailing toward -y
 // (aux = minus the position along them)
 function meshSquid() {
@@ -1234,7 +1239,7 @@ function gltfDoc(J, bufs) {
   if (skinI >= 0) {
     const sk = J.skins[skinI], nJ = sk.joints.length;
     const ibm = sk.inverseBindMatrices !== undefined ? acc(sk.inverseBindMatrices) : (() => { const a = new Float32Array(nJ * 16); for (let j = 0; j < nJ; j++) for (let k = 0; k < 4; k++) a[j * 16 + k * 5] = 1; return a; })();
-    const nodes = J.nodes.map((nd) => ({ t: nd.translation || [0, 0, 0], r: nd.rotation || [0, 0, 0, 1], s: nd.scale || [1, 1, 1], m: nd.matrix || null, parent: -1 }));
+    const nodes = J.nodes.map((nd) => ({ t: nd.translation || [0, 0, 0], r: nd.rotation || [0, 0, 0, 1], s: nd.scale || [1, 1, 1], m: nd.matrix || null, parent: -1, name: nd.name || '' }));
     J.nodes.forEach((nd, i) => { for (const c of nd.children || []) if (nodes[c]) nodes[c].parent = i; });
     const anims = (J.animations || []).map((a, i) => {
       const ch = a.channels.filter((c) => c.target && c.target.node !== undefined && c.target.path !== 'weights').map((c) => {
@@ -1323,7 +1328,7 @@ function finishModel(m, cls, name, ref = null) {
   }
   let x0 = 1e30, y0 = 1e30, z0 = 1e30, x1 = -1e30, y1 = -1e30, z1 = -1e30;
   for (let i = 0; i < P.length; i += 3) { x0 = min(x0, P[i]); x1 = max(x1, P[i]); y0 = min(y0, P[i + 1]); y1 = max(y1, P[i + 1]); z0 = min(z0, P[i + 2]); z1 = max(z1, P[i + 2]); }
-  const turn = ref ? ref.turn : MOVERS.includes(cls) && x1 - x0 > z1 - z0; // movers travel along +z: turn the long side onto z
+  const turn = ref ? ref.turn : MOVERS.includes(cls) && !/^player/.test(name) && x1 - x0 > z1 - z0; // movers travel along +z: turn the long side onto z (not the player characters: arms out in the rest pose)
   const s = ref ? ref.s : 1 / (max(x1 - x0, y1 - y0, z1 - z0) || 1), cx = ref ? ref.cx : (x0 + x1) / 2, cz = ref ? ref.cz : (z0 + z1) / 2;
   const by = ref ? ref.by : cls === 'c' || cls === 'l' || cls === 'm' ? (y0 + y1) / 2 : y0;
   const vb = new ArrayBuffer(n * 24), f = new Float32Array(vb), sb = new Int8Array(vb);

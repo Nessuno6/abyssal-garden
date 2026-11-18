@@ -274,14 +274,19 @@ CUSTOM.forEach((m, i) => { if (m.cls === 'm' || m.cls === 'i') return; (m.cls ==
   for (const i of CRE) { const k = 'clmb'.indexOf(CUSTOM[i].cls); for (let j = 0; j < [6, 1, 2, 2][k] && n < NCUS; j++, n++) { CSM[n] = i; CSK[n] = k; } }
   LIFEN[6] = n;
 }
-// the player's diver (assets/diver_swim.glb, bundled by build.mjs): you in third person and every other diver
-let PLAYER = -1;
-if (DIVER_GLB) {
+// the player characters (bundled by build.mjs): the diver (assets/diver_anim.glb) and a custom one
+// (assets/player_custom.glb), both with idle / tread / swim / fast / walk / jump / drive. You in third person, seated
+// at the controls of your sub, and every other diver (each with the character they chose).
+const PLAYERS = { diver: -1, custom: -1 };
+for (const [k, b64] of [['diver', DIVER_GLB], ['custom', PLAYER_GLB]]) {
+  if (!b64) continue;
   try {
-    const fm = finishModel(await parseModelRecord({ name: 'diver', type: 'glb', data: unb64(DIVER_GLB).buffer }, TX.model), 'c', 'diver');
-    fm.cls = 'player'; PLAYER = CUSTOM.length; CUSTOM.push(fm);
-  } catch (err) { console.warn('diver model', err); }
+    const fm = finishModel(await parseModelRecord({ name: 'player_' + k, type: 'glb', data: unb64(b64).buffer }, TX.model), 'c', 'player_' + k);
+    fm.cls = 'player'; PLAYERS[k] = CUSTOM.length; CUSTOM.push(fm);
+  } catch (err) { console.warn(k + ' player model', err); }
 }
+let PLAYER = PLAYERS[SAVE.char] >= 0 ? PLAYERS[SAVE.char] : PLAYERS.diver >= 0 ? PLAYERS.diver : PLAYERS.custom;
+const charOf = (k) => (PLAYERS[k] >= 0 ? PLAYERS[k] : PLAYERS.diver >= 0 ? PLAYERS.diver : PLAYER);
 // the built-in leviathans' model (assets/leviathan.glb, made in Blender: skinned, swim / fast / idle / attack / roar);
 // without it they fall back to the procedural serpent (meshLeviathan + vsLev)
 let LEVM = -1, LEVC = null;
@@ -314,6 +319,7 @@ await say('Raising crystals, vents and ruins…', 0.67, 900);
 meshes.push(meshCrystal().build(), meshChimney().build(), meshRuins().build(), meshSkeleton().build(), meshLeviathan().build(), meshSquid().build());
 const DIVER_MESH = meshes.length; meshes.push(meshDiver().build()); // 33: other players (net.js)
 const TORP_MESH = meshes.length; meshes.push(meshTorpedo().build()); // 34: missiles (weapons.js)
+const JOY_MESH = meshes.length; meshes.push(meshJoystick().build()); // 35: the sub's control stick (sub.js)
 const KMESH = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 21, 22, 23, 27, 28];
 let nV = 0, nI = 0;
 for (const m of meshes) { m.v0 = nV; m.i0 = nI; nV += m.nv; nI += m.ib.length; }
@@ -433,8 +439,8 @@ function levPut() {
 function ciEmit() {
   subEmit();
   if (PLAYER >= 0) {
-    if (THIRD && SUBM.mode === 'out') avatarPut(TPP[0], TPP[1], TPP[2], F[YAW], F[PIT], ME.spd, ME.t, nameHue(SAVE.nick || ''));
-    for (const [, P] of NET.peers) if (!P.ride) avatarPut(P.x, P.y, P.z, P.yaw, P.pit, P.spd || 0, P.at || 0, P.L.seed);
+    if (THIRD && SUBM.mode === 'out') avatarPut(TPP[0], TPP[1], TPP[2], F[YAW], F[PIT], ME.spd, ME.t, nameHue(SAVE.nick || ''), PLAYER, ME.jump);
+    for (const [, P] of NET.peers) if (!P.ride) avatarPut(P.x, P.y, P.z, P.yaw, P.pit, P.spd || 0, P.at || 0, P.L.seed, charOf(P.ch));
   }
   if (LEVM >= 0) levPut();
   for (let i = 0; i < nTmp; i++) { const L = LMTMP[i]; if (L.k === 13) ciPut(L.cm, L.x, L.y, L.z, L.sc, L.q[0], L.q[1], L.q[2], L.q[3], 0, L.seed, 0, 0); }
@@ -943,6 +949,11 @@ function collide() {
   }
 }
 const CR = 0.5;
+// push off the seabed: when you stand on it (eye under 2.4 m above it) and press up, a jump
+function tryJump() {
+  if (SUBM.mode !== 'out' || ME.jump >= 0) return;
+  if (F[CY] - hAt(F[CX], F[CZ]) < 2.4 && ME.spd < 3.5) { ME.jump = 0; F[VY] += 5; }
+}
 // how high you can go: your head out of the water (survival), or flying over the sea (creative)
 const YTOP = () => (CREATIVE ? 160 : 0.35);
 
@@ -1146,24 +1157,57 @@ function thirdIn(dt) {
 }
 function thirdOut() { F[CX] = TPP[0]; F[CY] = TPP[1]; F[CZ] = TPP[2]; }
 // the local diver's swim state: idle when still, swim, fast above 12 m/s; the clip clock runs with the speed
-const ME = { t: 0, spd: 0 };
-function playerAnim(dt) { ME.spd = hypot(F[VX], F[VY], F[VZ]); ME.t += dt * (ME.spd < 0.8 ? 1 : 0.7 + ME.spd / 14); }
-// a diver avatar into the model instance list: body centre just behind and below the eye, head along the view
-function avatarPut(x, y, z, yaw, pit, spd, t, hue) {
-  if (PLAYER < 0) return;
-  const S = CUSTOM[PLAYER].skin, an = S ? S.anims : [], find = (re) => max(0, an.findIndex((a) => re.test(a.name)));
-  const clip = spd < 0.8 ? find(/idle/i) : spd < 12 ? find(/swim/i) : find(/fast/i);
-  const cp = cos(pit), fx = cp * sin(yaw), fy = sin(pit), fz = -cp * cos(yaw);
-  const q = qMul(qAxis(0, 1, 0, PI - yaw), qAxis(1, 0, 0, -pit * 0.8));
-  const tint = [0, 1, 2].map((k) => 1 + (0.5 + 0.5 * cos(TAU * (hue + k * 0.33)) - 0.5) * 0.9);
-  const pose = S && ciPass === 1 ? poseAlloc(PLAYER, clip, t) : -2;
-  ciPut(PLAYER, x - fx * 0.75, y - 0.15 - fy * 0.75, z - fz * 0.75, 1.8, q[0], q[1], q[2], q[3], 0, hue, 0, 0, pose, tint);
+const ME = { t: 0, spd: 0, jump: -1 };
+function playerAnim(dt) {
+  ME.spd = hypot(F[VX], F[VY], F[VZ]); ME.t += dt * (ME.spd < 0.8 ? 1 : 0.7 + ME.spd / 14);
+  if (ME.jump >= 0) { ME.jump += dt; if (ME.jump > 1.1) ME.jump = -1; }
+}
+// a clip of a player character by name, falling back to the ones every character has
+function pclip(mi, name) {
+  const S = CUSTOM[mi].skin; if (!S) return 0;
+  const C = S.byName || (S.byName = {});
+  if (C[name] === undefined) {
+    const an = S.anims, f = (n) => an.findIndex((a) => a.name.toLowerCase() === n);
+    let i = f(name); if (i < 0) i = f({ tread: 'idle', walk: 'swim', jump: 'swim', drive: 'idle' }[name] || 'idle');
+    C[name] = max(0, i);
+  }
+  return C[name];
+}
+// what a diver is doing: jumping off the seabed, treading water at the surface, walking or standing on the seabed,
+// hovering, swimming, swimming fast. Upright for the first ones, along the view for the swims.
+function avatarPut(x, y, z, yaw, pit, spd, t, hue, mi = PLAYER, jump = -1) {
+  if (mi < 0) return;
+  const S = CUSTOM[mi].skin, g = hAt(x, z), up = y - g;
+  let clip, upright = true, ct = t, by = y - 0.15;
+  if (jump >= 0) { clip = 'jump'; ct = jump; by = g + 0.9; }
+  else if (y > -1.6 && spd < 3) { clip = 'tread'; by = y - 0.6; }
+  else if (up < 2.4 && spd < 3.5) { clip = spd < 0.5 ? 'idle' : 'walk'; by = g + 0.9; }
+  else { upright = spd < 0.8; clip = upright ? 'tread' : spd < 12 ? 'swim' : 'fast'; if (upright) by = y - 0.6; }
+  const p = upright ? 0 : pit, cp = cos(p), fx = cp * sin(yaw), fy = sin(p), fz = -cp * cos(yaw), back = upright ? 0.15 : 0.75;
+  const q = qMul(qAxis(0, 1, 0, PI - yaw), qAxis(1, 0, 0, -p * 0.8));
+  const tint = mi === PLAYERS.custom ? null : [0, 1, 2].map((k) => 1 + (0.5 + 0.5 * cos(TAU * (hue + k * 0.33)) - 0.5) * 0.9);
+  const pose = S && ciPass === 1 ? poseAlloc(mi, pclip(mi, clip), ct) : -2;
+  ciPut(mi, x - fx * back, upright ? by : y - 0.15 - fy * back, z - fz * back, 1.8, q[0], q[1], q[2], q[3], 0, hue, 0, 0, pose, tint);
+}
+// where a joint of a player character is in a pose (metres from the instance centre, model axes, before rotation):
+// the eyes and the hands of the seated pilot
+function modelJoint(mi, re, clip, t) {
+  const C = CUSTOM[mi], S = C.skin; if (!S) return null;
+  const key = '_j' + re.source; let ji = S[key];
+  if (ji === undefined) ji = S[key] = S.nodes.findIndex((n) => re.test(n.name));
+  if (ji < 0) return null;
+  if (!S.scr) S.scr = new Float32Array((S.nJ + 1) * 16);
+  skinPose(S, clip, t, S.scr, 0);
+  const W = S.Wm, n = C.norm, sc = 1.8;
+  let x = (W[ji * 16 + 12] - n.cx) * n.s, y = (W[ji * 16 + 13] - n.by) * n.s, z = (W[ji * 16 + 14] - n.cz) * n.s;
+  if (n.turn) { const k = x; x = -z; z = k; }
+  return [x * sc, y * sc, z * sc];
 }
 // ---------------------------------------------------------------- input
 const key = (e, v) => {
   switch (e.code) {
     case 'KeyW': case 'ArrowUp': kf = v; break; case 'KeyS': case 'ArrowDown': kb = v; break; case 'KeyA': case 'ArrowLeft': kl = v; break; case 'KeyD': case 'ArrowRight': kr = v; break;
-    case 'KeyE': case 'Space': ku = v; break; case 'KeyQ': case 'KeyC': kd = v; break; case 'ShiftLeft': case 'ShiftRight': ks = v; break;
+    case 'KeyE': case 'Space': if (v && !ku && !e.repeat) tryJump(); ku = v; break; case 'KeyQ': case 'KeyC': kd = v; break; case 'ShiftLeft': case 'ShiftRight': ks = v; break;
     case 'ControlLeft': case 'ControlRight': kt = v; break;
     case 'KeyV': if (v && !e.repeat) toggleView(); break;
     case 'KeyF': if (!e.repeat) subUse(!!v); break;
@@ -1246,6 +1290,14 @@ $('gt').querySelectorAll('button').forEach((b) => { b.onclick = () => { const j 
 // game mode (World tab): survival, or creative where creatures do not notice you; applied at once
 function setMode(m) { CREATIVE = m === 'creative'; document.documentElement.classList.toggle('cr', CREATIVE); if (!CREATIVE && conOpen) conShow(false); save({ mode: m }); $('gm').querySelectorAll('button').forEach((b) => { b.className = b.dataset.m === m ? 'on' : ''; }); $('gmn').textContent = CREATIVE ? 'Creative: you are invisible to the creatures (nothing stalks, flees from or comes to look at you).' : 'Survival: creatures notice you: leviathans stalk and lunge, shy creatures flee, curious ones come closer.'; }
 $('gm').querySelectorAll('button').forEach((b) => { b.onclick = () => setMode(b.dataset.m); });
+// your character (the diver or the custom one): in third person, at the controls of your sub, to the other players
+function setChar(k) {
+  if (PLAYERS[k] < 0) k = PLAYERS.diver >= 0 ? 'diver' : 'custom';
+  PLAYER = PLAYERS[k]; save({ char: k });
+  $('chr').querySelectorAll('button').forEach((b) => { b.className = b.dataset.c === k ? 'on' : ''; b.disabled = PLAYERS[b.dataset.c] < 0; });
+}
+$('chr').querySelectorAll('button').forEach((b) => { b.onclick = () => setChar(b.dataset.c); });
+setChar(SAVE.char || 'diver');
 // time of day and weather (sky.js)
 function setTod(v) { TODM = v; save({ tod: v }); $('tdy').querySelectorAll('button').forEach((b) => { b.className = b.dataset.t === v ? 'on' : ''; }); skyNote(); }
 function setWx(v) { WXM = v; save({ wx: v }); $('wxr').querySelectorAll('button').forEach((b) => { b.className = b.dataset.w === v ? 'on' : ''; }); skyNote(); }

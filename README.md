@@ -499,6 +499,21 @@ in Blender this way. Without an interior the sub still works: boarding goes stra
   another player's hatch and press `F` to ride as a passenger. Passengers sit in a seat, can stand and walk the
   command centre, ping the sonar and ask the pilot's sub to switch its lights.
 
+### Characters
+
+**World → Character** picks who you are: the **diver** or a **custom** character (`source/assets/player_custom.glb`,
+kept out of the repository; the option is greyed out without it). Both have the same clips, made in Blender: idle,
+tread (treading water), swim, fast, walk, jump and drive. Near the seabed you walk and stand on it, and `Space` there
+pushes off in a jump; at the surface you tread water; at your sub's controls you sit and drive. Other players see the
+character each of them chose.
+
+### Driving the sub: two views and the HUD
+
+`V` switches between third person (behind and above the hull, pulled in when rock is in the way) and first person: you
+sit at the controls (the seat reclined) with your hands on a stick that tilts as you steer; looking slightly down at it
+counts as level. The HUD keeps the sonar map in the top-left corner and the gauges in the top right: three arcs, hull
+(blue, shield), power (yellow, bolt) and boost (grey, rocket), around your depth and speed.
+
 ### Missiles
 
 Piloting, press `X` (or **Fire**) to launch a missile from the sub's nose: 6 in the rack, one reloads every 5 s and

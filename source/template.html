@@ -103,7 +103,7 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
 #mk { flex-wrap: wrap; }
 #mk span { flex-basis: 100%; }
 /* the class choices wrap onto two lines instead of squeezing their labels together */
-#mk button, #gt button, #tdy button, #wxr button { flex: 1 0 auto; padding: .7em .7em; }
+#mk button, #gt button, #tdy button, #wxr button, #chr button { flex: 1 0 auto; padding: .7em .7em; }
 .nt { font-size: .62em; letter-spacing: .04em; color: #7ff3ffaa; font-weight: 600; margin-top: -.4em; }
 .o { display: flex; align-items: center; gap: .4em; padding: .4em; }
 .o span { flex: 1; color: #7ff3ff; }
@@ -153,12 +153,19 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
   box-shadow: inset 0 0 0 2px #7ff3ff, 0 .3em 1em #0009; font-size: 1.3em; color: #e8fbff; opacity: .8; }
 .g #cv { display: flex; }
 /* submarine: status (depth, hull, power, boost, sonar) top left, messages and the Use button bottom centre */
-#subh { position: absolute; left: max(.6em, env(safe-area-inset-left)); top: 2.6em; width: 13em; padding: .5em .6em; border-radius: .6em; background: #021016cc; color: #cff7ff; font: 600 .75em/1.3 system-ui, sans-serif; z-index: 2; }
-#subh p { margin: 0 0 .35em; }
+/* sub HUD: the sonar map in the top-left corner, the gauges top right (arcs: hull, power, boost) */
+#subh { position: absolute; inset: 0; pointer-events: none; color: #cff7ff; font: 600 .75em/1.3 system-ui, sans-serif; z-index: 2; }
+#sonar { position: absolute; left: max(.6em, env(safe-area-inset-left)); top: 2.6em; width: min(15em, 30vmin); height: auto; border-radius: 50%; background: radial-gradient(#06303acc, #021016ee); box-shadow: inset 0 0 0 1px #7ff3ff55, 0 0 0 .35em #02101688; }
+#subi { position: absolute; right: max(.6em, env(safe-area-inset-right)); top: 4.4em; width: min(16em, 32vmin); }
+#subg { display: block; width: 100%; height: auto; overflow: visible; }
+#subg path.trk, #subg path.val { fill: none; stroke-width: 11; stroke-linecap: round; }
+#subg path.trk { stroke: #02101699; }
+#subg path.val { stroke-dasharray: 0 100; transition: stroke-dasharray .3s; }
+#subg text { font: 700 12px system-ui, sans-serif; }
+#subg text.big { font-size: 22px; fill: #e8fbff; }
+#subg #subspd { fill: #9fdbe6; font-size: 11px; }
+#subd { margin: .2em 0 0; text-align: center; text-shadow: 0 1px 2px #000; }
 #subd.warn { color: #ff8a7a; }
-#subh .bar { position: relative; height: 1.3em; padding-left: .4em; border-radius: .3em; background: linear-gradient(90deg, #19c3d6aa var(--v, 0%), #03222d var(--v, 0%)); line-height: 1.3em; }
-#subh .bar::after { content: attr(data-v); position: absolute; right: .4em; }
-#sonar { display: block; width: 100%; height: auto; border-radius: 50%; background: radial-gradient(#06303acc, #021016ee); box-shadow: inset 0 0 0 1px #7ff3ff55; }
 #submsg { position: absolute; left: 50%; bottom: 5.2em; transform: translateX(-50%); max-width: 90vw; padding: .4em .8em; border-radius: .5em; background: #021016d9; color: #e8fbff; font: 700 .85em/1.3 system-ui, sans-serif; z-index: 2; text-align: center; }
 #use { position: absolute; left: 50%; bottom: 1.6em; transform: translateX(-50%); padding: .7em 1.2em; background: linear-gradient(#9ff6ff, #19c3d6); z-index: 2; }
 #sbt { position: absolute; right: max(.6em, env(safe-area-inset-right)); bottom: max(.6em, env(safe-area-inset-bottom)); display: flex; gap: .5em; z-index: 2; }
@@ -213,6 +220,7 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
       <p id=gt class="o w"><span>Go to</span><button data-j=lev>Leviathan</button><button data-j=big>Landmark</button><button data-j=minor>Structure</button><button data-j=cave>Cave</button><button data-j=bio>Next biome</button><button data-j=sub>My sub</button></p>
       <p id=gm class=o><span>Game mode</span><button data-m=survival>Survival</button><button data-m=creative>Creative</button></p>
       <p id=gmn class=nt></p>
+      <p id=chr class=o><span>Character</span><button data-c=diver>Diver</button><button data-c=custom>Custom</button></p>
       <p id=tdy class="o w"><span>Time of day</span><button data-t=auto>Cycle</button><button data-t=dawn>Dawn</button><button data-t=noon>Noon</button><button data-t=dusk>Dusk</button><button data-t=night>Night</button></p>
       <p id=wxr class="o w"><span>Weather</span><button data-w=auto>Changing</button><button data-w=clear>Clear</button><button data-w=cloudy>Cloudy</button><button data-w=overcast>Overcast</button><button data-w=rain>Rain</button><button data-w=storm>Storm</button><button data-w=thunderstorm>Thunderstorm</button></p>
       <p id=skn class=nt></p>
@@ -266,7 +274,7 @@ svg { width: 1.5em; height: 1.5em; fill: currentColor; }
 <button id=o aria-label=Menu>≡</button>
 <button id=cv aria-label="First / third person">◐</button>
 <button id=cb aria-label="Console">⌨</button>
-<div id=subh hidden><p id=subd></p><p class=bar id=subhull>Hull</p><p class=bar id=subpow>Power</p><p class=bar id=subbst>Boost</p><canvas id=sonar width=180 height=180></canvas></div>
+<div id=subh hidden><canvas id=sonar width=200 height=200></canvas><div id=subi><svg id=subg viewBox="0 0 200 162" aria-label="Hull, power and boost"><path class=trk d="M25.5 143.0A86 86 0 1 1 174.5 143.0" pathLength=100 /><path id=subhull class=val d="M25.5 143.0A86 86 0 1 1 174.5 143.0" pathLength=100 stroke="#8fb8ff" style="filter:drop-shadow(0 0 3px #8fb8ff)" /><path class=trk d="M44.6 132.0A64 64 0 1 1 155.4 132.0" pathLength=100 /><path id=subpow class=val d="M44.6 132.0A64 64 0 1 1 155.4 132.0" pathLength=100 stroke="#ffe14a" style="filter:drop-shadow(0 0 3px #ffe14a)" /><path class=trk d="M63.6 121.0A42 42 0 1 1 136.4 121.0" pathLength=100 /><path id=subbst class=val d="M63.6 121.0A42 42 0 1 1 136.4 121.0" pathLength=100 stroke="#d5dbe0" style="filter:drop-shadow(0 0 3px #d5dbe0)" /><g transform="translate(22 152)" fill="#8fb8ff"><path d="M0-7L6-4.5V0C6 4 3 6.5 0 7.5C-3 6.5-6 4-6 0V-4.5Z" /></g><text id=subhullv x="32" y="156" fill="#8fb8ff"></text><g transform="translate(82 152)" fill="#ffe14a"><path d="M1.5-7.5L-5 1H-0.5L-2 7.5L5-1.5H0.5Z" /></g><text id=subpowv x="92" y="156" fill="#ffe14a"></text><g transform="translate(142 152)" fill="#d5dbe0"><path d="M0-7.5C3-5 3.5-1 2.5 3H-2.5C-3.5-1-3-5 0-7.5ZM-2.5 1L-5 4.5H-2.2ZM2.5 1L5 4.5H2.2ZM-1.3 3.6L0 7.5L1.3 3.6Z" /></g><text id=subbstv x="152" y="156" fill="#d5dbe0"></text><text id=subdep x=100 y=96 text-anchor=middle class=big></text><text id=subspd x=100 y=116 text-anchor=middle></text></svg><p id=subd></p></div></div>
 <p id=submsg hidden></p>
 <button id=use hidden></button>
 <div id=sbt hidden><button id=sbl>Lights</button><button id=sbs>Sonar</button><button id=sbb>Boost</button><button id=sbf>Fire</button></div>
