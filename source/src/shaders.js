@@ -699,8 +699,7 @@ fn side(p: vec3f, n: vec3f, open: f32, z: f32) -> vec3f { return mix(WCOL, PCOL,
 // background colour exactly at g.fog.x, with no pop-in at the edge
 fn fog(c: vec3f, wp: vec3f, z: f32) -> vec3f {
   // optical distance: g.wat.w is the biome's murk (vents thick, reefs clear)
-  // cave water is still and clear: you see across a whole cavern
-  let v = wp - g.cam.xyz; let d = length(v); let rd = v / d; let ds = d * g.fog.y * g.wat.w * (1. - .7 * g.cav.x);
+  let v = wp - g.cam.xyz; let d = length(v); let rd = v / d; let ds = d * g.fog.y * g.wat.w;
   // above the surface: a light sea haze (anything under the water is behind the opaque surface)
   if (g.cam.y > 0.) { let a = exp(-d * .0004 * (1. + 3. * g.env.w)); return c * a + skyC(vec3f(rd.x, max(rd.y, .02), rd.z)) * .75 * (1. - a); }
   // in caves the haze takes the colour of the cave's glow (and of a brine river's surface when you look across it)
@@ -938,7 +937,7 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
   c += E * (.25 + ca) * pow(sat(dot(N, H)), mix(10., 70., gloss)) * gloss * ndl * 1.8;
   c += (amb(i.wp, reflect(-V, N), sky, z) + side(i.wp, reflect(-V, N), open, z)) * ao * (.08 + gloss) * .6 * pow(1. - sat(dot(N, V)), 2.5);
   // the seabed opens at cave mouths
-  if (i.bio2.w < -.5 && mouthD(i.wp) < .3) { discard; } // a little wider than the tunnel: no strip of seabed left across it
+  if (i.bio2.w < -.5 && mouthD(i.wp) < -.6) { discard; }
   // lit by the local biome, fogged by the camera's (so distant terrain melts into the same background)
   return fin(fog(c, i.wp, zone(i.wp)));
 }
