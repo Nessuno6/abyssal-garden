@@ -519,32 +519,16 @@ fn cavL(p: vec3f, n: vec3f) -> vec3f {
   // the glow of the cave you are in fills the dark, more from below (a lava lake, a brine river)
   return s + g.cvf.rgb * (.55 + .45 * sat(-n.y + .4));
 }
-// signed distance to the nearest cave mouth (capsules g.cm: a.xyz + radius, b.xyz), g.cav.w of them; < 0 inside
+// horizontal distance into the nearest cave-entrance patch (g.cm[2i]: centre xyz, radius), g.cav.w of them; < 0
+// inside. There the seabed is part of the cave's mesh (cave.js), so the clipmap and the plants keep out.
 fn mouthD(p: vec3f) -> f32 {
   var d = 1e9;
   let nm = i32(g.cav.w);
-  for (var i = 0; i < nm; i++) {
-    let a = g.cm[i * 2]; let b = g.cm[i * 2 + 1].xyz;
-    let pa = p - a.xyz; let ba = b - a.xyz;
-    let h = sat(dot(pa, ba) / dot(ba, ba));
-    d = min(d, length(pa - ba * h) - a.w);
-  }
+  for (var i = 0; i < nm; i++) { let a = g.cm[i * 2]; d = min(d, length(p.xz - a.xz) - a.w); }
   return d;
 }
 // the rock knolls over the mouths (cave.js cvMound without its noise): an ellipsoid set back over each tunnel
-fn knollD(p: vec3f) -> f32 {
-  var d = 1e9;
-  let nm = i32(g.cav.w);
-  for (var i = 0; i < nm; i++) {
-    let a = g.cm[i * 2]; let b = g.cm[i * 2 + 1].xyz; let r = a.w;
-    let u = normalize((b - a.xyz).xz + vec2f(1e-5, 0.));
-    let gp = a.xyz + vec3f(u.x * r * 1.8, -r * .2, u.y * r * 1.8);
-    let c = gp + vec3f(u.x * r, 0., u.y * r);
-    let q = (p - c) / vec3f(r * 2.2, r * 1.9, r * 2.2);
-    d = min(d, (length(q) - 1.) * r * 1.9);
-  }
-  return d;
-}
+fn knollD(p: vec3f) -> f32 { return 1e9; } // the knolls are inside the entrance patches now (mouthD covers them)
 // the sky over the sea (camera above the surface): blue gradient, sun disc and halo, a layer of slow clouds
 fn vh2(p: vec2f) -> f32 { let i = floor(p); let f = p - i; let u = f * f * (3. - 2. * f);
   let a = hs(i.x + i.y * 57.); let b = hs(i.x + 1. + i.y * 57.); let c = hs(i.x + (i.y + 1.) * 57.); let d = hs(i.x + 1. + (i.y + 1.) * 57.);
@@ -937,7 +921,7 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
   c += E * (.25 + ca) * pow(sat(dot(N, H)), mix(10., 70., gloss)) * gloss * ndl * 1.8;
   c += (amb(i.wp, reflect(-V, N), sky, z) + side(i.wp, reflect(-V, N), open, z)) * ao * (.08 + gloss) * .6 * pow(1. - sat(dot(N, V)), 2.5);
   // the seabed opens at cave mouths
-  if (i.bio2.w < -.5 && mouthD(i.wp) < 0.) { discard; } // exactly the tunnel: no strip of seabed left inside it
+  if (i.bio2.w < -.5 && mouthD(i.wp) < -1.5) { discard; } // inside an entrance patch the cave's mesh is the seabed (1.5 m overlap at the edge, under the boulders)
   // lit by the local biome, fogged by the camera's (so distant terrain melts into the same background)
   return fin(fog(c, i.wp, zone(i.wp)));
 }

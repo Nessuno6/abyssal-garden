@@ -677,8 +677,10 @@ next visit. If loading crashes the tab or the GPU device is lost, the next launc
 About half of the 640 m world cells hold a cave system (`cave.js`): two mouths, each opening in the side of a rocky
 knoll, a winding tunnel 34-48 m wide (a submarine fits easily) 35-115 m under the rock, a chamber halfway and often a side
 passage to a dead-end grotto. A system is a skeleton of capsules plus 3D noise, meshed on the CPU with surface nets a
-few milliseconds per frame when you come within about 900 m; the GPU cuts the seabed open at the mouths and keeps
-plants out of them. Daylight only reaches near the mouths. Each cave has a theme, inspired by Subnautica's caves:
+few milliseconds per frame when you come within about 900 m; the entrances are made the way voxel-terrain games make
+them: within ~60 m of each mouth the seabed itself is part of the cave's mesh (ground, a rocky rise and the tunnel are
+one surface, the tunnel smooth-subtracted from the ground, so the mouth rounds into it with no seam), the clipmap and
+the plants keep out of that patch, and a ring of boulders covers the join with the open seabed. Daylight only reaches near the mouths. Each cave has a theme, inspired by Subnautica's caves:
 **glowing fungus** (giant violet mushrooms, crystals overhead), **crystal** (cyan clusters everywhere) or **lava** (in
 the deep: vent chimneys, glowing veins and pools). The brightest growths are real lights (the 8 nearest). Caves
 collide like rock. **Go to → Cave** or `/tp cave` takes you to the nearest entrance.

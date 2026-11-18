@@ -10,7 +10,7 @@
 // by the rock shader with the daylight that reaches each vertex (n.w) and the cave's theme (fungus, crystal, lava).
 // Things grow on the walls (giant glowing fungi, crystals, vent chimneys, rocks) and the brightest of them light the
 // cave: the 8 nearest are point lights in G (cavL). Collision: sdScene() takes the cave as water (caveWater).
-const CAVE_CELL = 640, CVS = new Map(), CV_CS = LV > 1 ? 3.2 : 2.5, CV_B = 16, CV_AMP = 4, CV_LIP = 0.25; // the tunnel walls reach 25 cm above the seabed at the hole's edge (the hole is cut exactly along the tunnel)
+const CAVE_CELL = 640, CVS = new Map(), CV_CS = LV > 1 ? 3.2 : 2.5, CV_B = 16, CV_AMP = 4, CV_LIP = 0; // the entrances are volumetric patches now (cvMesh): no rim needed
 const CVR = []; // the systems with a finished mesh
 let cvGenS = null, cvGenI = null; // the one being meshed
 const CAVE_THEMES = ['glowing fungus', 'crystal', 'lava', 'brine river', 'bioluminescent cove'];
@@ -66,7 +66,8 @@ function caveSys(gx, gz) {
     const ix = gx_ + sx * r * 2.2, iz = gz_ + sz * r * 2.2;
     const i = [ix, min(hg - r * 1.3, hAt(ix, iz) - r * 1.25), iz];
     const c = [gx_ + sx * r, hg, gz_ + sz * r];
-    return { a: o, b: i, r, g: [gx_, hg, gz_], mc: c, mh: r * 2.2, mv: r * 1.9 };
+    // P: the radius of the entrance patch around the knoll, where the seabed itself is meshed with the cave (cvMesh)
+    return { a: o, b: i, r, g: [gx_, hg, gz_], mc: c, mh: r * 2.2, mv: r * 1.9, P: r * 2.2 * 1.45 + 8 };
   };
   const mA = mouth(ax, az, ha, ux, uz), mB = mouth(bx, bz, hb, -ux, -uz);
   // interior control points, wandering sideways
@@ -231,6 +232,7 @@ function* cvMesh(S) {
     const cx = S.ox + (bx + 0.5) * BW, cy = (by + 0.5) * BW, cz = S.oz + (bz + 0.5) * BW;
     let near = abs(cvDist(S, S.all, S.n, cx, cy, cz)) < hd + CV_AMP + 2;
     for (const m of S.mouths) if (hypot(cx - m.mc[0], cy - m.mc[1], cz - m.mc[2]) < m.mh + hd + 6) near = true;
+    for (const m of S.mouths) if (hypot(cx - m.mc[0], cz - m.mc[2]) < m.P + hd && abs(cy - m.mc[1]) < hd + m.mv + 25) near = true; // the entrance patch's ground
     for (const k of S.rocks) { const bx = k[3] - k[0], by = k[4] - k[1], bz = k[5] - k[2], px = cx - k[0], py = cy - k[1], pz = cz - k[2]; let h = (px * bx + py * by + pz * bz) / (bx * bx + by * by + bz * bz); h = h < 0 ? 0 : h > 1 ? 1 : h; if (hypot(px - bx * h, py - by * h, pz - bz * h) < k[6] * 1.4 + hd + 6) near = true; }
     if (near) blocks.push([bx, by, bz]);
   }
@@ -240,7 +242,15 @@ function* cvMesh(S) {
   const EDG = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
   let nl = 0, ground = false;
   // water-positive field at a world point (the cave, cut off LIP above the seabed)
-  const wf = (x, y, z, hg) => { const c = -cvField(S, list, nl, x, y, z); return ground ? max(c, min(y - hg - CV_LIP, cvMound(S, x, y, z))) : c; };
+  // Entrance patches (the way voxel-terrain games make cave mouths): within P of a mouth's knoll the seabed is not the
+  // clipmap's any more but part of this mesh, one surface with the knoll and the tunnel: rock = ground smooth-union
+  // knoll, water = that smooth-subtracted by the cave, so the mouth rounds into the ground with no seam. Outside the
+  // patches only the cave walls are kept (the clipmap draws the seabed).
+  const inPatch = (x, z) => { for (const m of S.mouths) if (hypot(x - m.mc[0], z - m.mc[2]) < m.P) return true; return false; };
+  const smin = (a, b, k) => { const h = max(k - abs(a - b), 0) / k; return min(a, b) - h * h * k * 0.25; };
+  const smax = (a, b, k) => { const h = max(k - abs(a - b), 0) / k; return max(a, b) + h * h * k * 0.25; };
+  const field = (c, x, y, z, hg, pin) => pin ? smax(c, smin(y - hg, cvMound(S, x, y, z), 5), 6) : max(c, min(y - hg - CV_LIP, cvMound(S, x, y, z)));
+  const wf = (x, y, z, hg) => { const c = -cvField(S, list, nl, x, y, z); return ground ? field(c, x, y, z, hg, inPatch(x, z)) : c; };
   let bn = 0;
   for (const [bx, by, bz] of blocks) {
     const X0 = S.ox + bx * BW - CS, Y0 = by * BW - CS, Z0 = S.oz + bz * BW - CS; // corner (-1, -1, -1)
@@ -252,7 +262,11 @@ function* cvMesh(S) {
     for (let k = 0; k < N; k++) for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
       const x = X0 + i * CS, y = Y0 + j * CS, z = Z0 + k * CS, c = -cvField(S, list, nl, x, y, z), o = (k * N + j) * N + i;
       // the seabed (drawn by the clipmap: its faces are skipped), the knolls and the cave
-      if (ground) { const g = y - H[k * N + i] - CV_LIP, m = cvMound(S, x, y, z), wt = min(g, m); F[o] = max(c, wt); T[o] = g <= m && wt > c ? 1 : 0; } else { F[o] = c; T[o] = 0; }
+      if (ground) {
+        const hg0 = H[k * N + i];
+        if (inPatch(x, z)) { F[o] = field(c, x, y, z, hg0, true); T[o] = 0; } // every face of the patch is kept, the seabed's too
+        else { const g = y - hg0 - CV_LIP, m = cvMound(S, x, y, z), wt = min(g, m); F[o] = max(c, wt); T[o] = g <= m && wt > c ? 1 : 0; }
+      } else { F[o] = c; T[o] = 0; }
     }
     // one vertex per cell the surface crosses: the mean of its edge crossings, normal from the field's gradient
     for (let k = 0; k < C1; k++) for (let j = 0; j < C1; j++) for (let i = 0; i < C1; i++) {
@@ -365,6 +379,14 @@ function cvDecor(S) {
     items.push(L);
     if (glow && (k === 8 || R() < 0.7)) lights.push({ x: x + nx * sc * 1.5, y: y + ny * sc * 1.5, z: z + nz * sc * 1.5, rad: (k === 8 ? 26 : 16) + sc * 3, c: glow, i: k === 8 ? 1.6 : k === 5 ? 1.1 : 0.9 });
   }
+  // boulders along the edge of each entrance patch, over the join between its ground and the clipmap's
+  for (const M of S.mouths) {
+    const n = ceil(TAU * M.P / 8);
+    for (let k = 0; k < n; k++) {
+      const a = (k + R() * 0.6) / n * TAU, rr = M.P + (R() - 0.5) * 2.5, x = M.mc[0] + cos(a) * rr, z = M.mc[2] + sin(a) * rr, sc = 2.6 + 3.4 * R(), spin = R() * TAU;
+      items.push({ k: 12, x, y: hAt(x, z) - 0.35 * sc, z, q: qMul(qAxis(0, 1, 0, spin), qAxis(1, 0, 0, (R() - 0.5) * 0.5)), sc, rad: 2 * sc, mesh: (R() * 4) | 0, mat: 1, seed: R(), yaw: spin, cv: true, open: 1 });
+    }
+  }
   // the entrances: big glowing growths on the knoll around each mouth, and a light just inside it
   for (const M of S.mouths) {
     let n = 0;
@@ -445,8 +467,8 @@ function caveUniforms(m) {
   const nm = min(4, ms.length);
   for (let i = 0; i < nm; i++) {
     const M = ms[i][1], o = 88 + i * 8;
-    m[o] = M.a[0] - cx; m[o + 1] = M.a[1]; m[o + 2] = M.a[2] - cz; m[o + 3] = M.r;
-    m[o + 4] = M.b[0] - cx; m[o + 5] = M.b[1]; m[o + 6] = M.b[2] - cz; m[o + 7] = 0;
+    m[o] = M.mc[0] - cx; m[o + 1] = M.mc[1]; m[o + 2] = M.mc[2] - cz; m[o + 3] = M.P; // the entrance patch: centre, radius
+    m[o + 4] = 0; m[o + 5] = 0; m[o + 6] = 0; m[o + 7] = 0;
   }
   // lights within 110 m, nearest 8, fading out from 80 m
   CVL.length = 0;
@@ -503,7 +525,7 @@ function caveKnoll(x, y, z, grad) {
   return best;
 }
 function caveMouthNear(x, z, rad) {
-  for (const S of CVR) for (const M of S.mouths) if (hypot(M.mc[0] - x, M.mc[2] - z) < rad + M.mh + 4) return true;
+  for (const S of CVR) for (const M of S.mouths) if (hypot(M.mc[0] - x, M.mc[2] - z) < rad + M.P + 4) return true;
   return false;
 }
 // the nearest cave system (spiralling out over cells), for Go to and /cave
