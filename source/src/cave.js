@@ -318,8 +318,10 @@ function* cvMesh(S) {
     const C = S.cav, st = 4, py = C.pool, n = ceil(C.Rh * 2.4 / st), xs = C.x - n * st / 2, zs = C.z - n * st / 2, row = new Int32Array((n + 1) * (n + 1)).fill(-1);
     nl = cvNear(S, C.x, py, C.z, C.Rh * 1.3, list);
     const inside = new Uint8Array((n + 1) * (n + 1));
-    for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) inside[j * (n + 1) + i] = cvField(S, list, nl, xs + i * st, py, zs + j * st) < -0.5 ? 1 : 0;
-    const vtx = (i, j) => { const k = j * (n + 1) + i; if (row[k] >= 0) return row[k]; if (nv >= cap) grow(); pos[nv * 3] = xs + i * st - S.ox; pos[nv * 3 + 1] = inside[k] ? py : py - 7; // the sheet's edge dips under the floor, into the rock pos[nv * 3 + 2] = zs + j * st - S.oz; nrm[nv * 4] = 0; nrm[nv * 4 + 1] = 127; nrm[nv * 4 + 2] = 0; nrm[nv * 4 + 3] = -127; return (row[k] = nv++); };
+    // only over floor: water at the sheet's level, and rock within 5 m below it (no sheet hanging over a pit)
+    for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) { const x = xs + i * st, z = zs + j * st; inside[j * (n + 1) + i] = cvField(S, list, nl, x, py, z) < -0.5 && cvField(S, list, nl, x, py - 5, z) > 0 ? 1 : 0; }
+    // (the sheet's edge dips 7 m under the floor, into the rock)
+    const vtx = (i, j) => { const k = j * (n + 1) + i; if (row[k] >= 0) return row[k]; if (nv >= cap) grow(); pos[nv * 3] = xs + i * st - S.ox; pos[nv * 3 + 1] = inside[k] ? py : py - 7; pos[nv * 3 + 2] = zs + j * st - S.oz; nrm[nv * 4] = 0; nrm[nv * 4 + 1] = 127; nrm[nv * 4 + 2] = 0; nrm[nv * 4 + 3] = -127; return (row[k] = nv++); };
     for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
       const a = j * (n + 1) + i; if (!(inside[a] || inside[a + 1] || inside[a + n + 1] || inside[a + n + 2])) continue;
       if (ni + 6 > idx.length) growI();
