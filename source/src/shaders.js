@@ -937,7 +937,7 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
   c += E * (.25 + ca) * pow(sat(dot(N, H)), mix(10., 70., gloss)) * gloss * ndl * 1.8;
   c += (amb(i.wp, reflect(-V, N), sky, z) + side(i.wp, reflect(-V, N), open, z)) * ao * (.08 + gloss) * .6 * pow(1. - sat(dot(N, V)), 2.5);
   // the seabed opens at cave mouths
-  if (i.bio2.w < -.5 && mouthD(i.wp) < -.6) { discard; }
+  if (i.bio2.w < -.5 && mouthD(i.wp) < 0.) { discard; } // exactly the tunnel: no strip of seabed left inside it
   // lit by the local biome, fogged by the camera's (so distant terrain melts into the same background)
   return fin(fog(c, i.wp, zone(i.wp)));
 }

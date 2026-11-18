@@ -10,7 +10,7 @@
 // by the rock shader with the daylight that reaches each vertex (n.w) and the cave's theme (fungus, crystal, lava).
 // Things grow on the walls (giant glowing fungi, crystals, vent chimneys, rocks) and the brightest of them light the
 // cave: the 8 nearest are point lights in G (cavL). Collision: sdScene() takes the cave as water (caveWater).
-const CAVE_CELL = 640, CVS = new Map(), CV_CS = LV > 1 ? 3.2 : 2.5, CV_B = 16, CV_AMP = 4, CV_LIP = -0.35; // the walls stop just under the seabed: no rim above it (the GPU hole is a little smaller)
+const CAVE_CELL = 640, CVS = new Map(), CV_CS = LV > 1 ? 3.2 : 2.5, CV_B = 16, CV_AMP = 4, CV_LIP = 0.25; // the tunnel walls reach 25 cm above the seabed at the hole's edge (the hole is cut exactly along the tunnel)
 const CVR = []; // the systems with a finished mesh
 let cvGenS = null, cvGenI = null; // the one being meshed
 const CAVE_THEMES = ['glowing fungus', 'crystal', 'lava', 'brine river', 'bioluminescent cove'];
