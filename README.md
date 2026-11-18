@@ -491,6 +491,7 @@ in Blender this way. Without an interior the sub still works: boarding goes stra
     leviathans red, creatures yellow, fish schools green, other subs cyan, structures grey;
   * in the 3D view, each ping sends a pulse out from the sub at 110 m/s. It outlines rock, creatures and structures in
     cyan as it passes, and the outlines fade over a few seconds, so you can make out shapes in the dark.
+    The pulse passes through kelp, grass and algae: it shows the rock and creatures behind them.
 * **Lights:** the sub's lights work at any depth. The cabin is lit while power lasts.
 * **Creative:** no damage and no power use.
 * **LAN games:** every player has a sub (from the host's models), and you collide with the others' subs. Swim to
@@ -641,6 +642,29 @@ without them it uses frame time. The target is 11.7 ms (a sustained 60 fps with 
 80 % of the display's refresh period (up to 165 Hz) on desktops. Too slow lowers pixels first, then the draw-distance
 scale, then the remaining pixels; extra headroom restores them in reverse order. The settled values are saved for the
 next visit. If loading crashes the tab or the GPU device is lost, the next launch starts one tier lower.
+
+### Caves
+
+About half of the 640 m world cells hold a cave system (`cave.js`): two mouths, each opening in the side of a rocky
+knoll, a winding tunnel 26-36 m wide (a submarine fits) 30-50 m under the rock, a chamber halfway and often a side
+passage to a dead-end grotto. A system is a skeleton of capsules plus 3D noise, meshed on the CPU with surface nets a
+few milliseconds per frame when you come within about 900 m; the GPU cuts the seabed open at the mouths and keeps
+plants out of them. Daylight only reaches near the mouths. Each cave has a theme, inspired by Subnautica's caves:
+**glowing fungus** (giant violet mushrooms, crystals overhead), **crystal** (cyan clusters everywhere) or **lava** (in
+the deep: vent chimneys, glowing veins and pools). The brightest growths are real lights (the 8 nearest). Caves
+collide like rock. **Go to → Cave** or `/tp cave` takes you to the nearest entrance.
+
+### Above the surface
+
+Swim up and your head comes out of the water (in creative you can fly up to 160 m): a sky with sun and clouds, and the
+open sea to the horizon. Your submarine can surface too. `/tp surface` takes you there.
+
+### The leviathans
+
+The built-in leviathans are the lantern leviathan (`assets/leviathan.glb`, made in Blender for this project): a 42 m
+plated serpent with a four-petal jaw, a glowing lure, frills and whisker-tentacles, 55 bones and 8 clips. On patrol it
+swims and now and then curls through a tight turn; when it starts stalking you it flares its frills and roars, then
+circles fast and lunges when its head passes close; hunting fish, it swings its lure in front of its mouth.
 
 ## Model library
 

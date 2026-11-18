@@ -130,12 +130,23 @@ function wworc(ax, az, lx, lz, n, s) {
 function wbio(ax, az, lx, lz) {
   const s = WSEED;
   const qx = lx + (wfbm(ax, az, lx, lz, 4, 3, s + 71) - 0.5) * 260, qz = lz + (wfbm(ax, az, lx, lz, 4, 3, s + 72) - 0.5) * 260;
-  wworc(ax, az, qx, qz, 2, s + 74);
-  const b = sstep(0, 0.22, WOR[1] - WOR[0]);
+  // soft Voronoi: every one of the 9 nearby regions weighs in by how close it is to being the nearest (smoothly from
+  // BIOBAND cells behind the nearest down to 0), so borders blend over ~250 m and triple points have no seams
+  const k = 2 / 1024, px = qx * k, pz = qz * k, x0 = floor(px), z0 = floor(pz), fx = px - x0, fz = pz - z0, ix = ax * 2 + x0, iz = az * 2 + z0;
+  let d1 = 9;
+  for (let z = -1, j = 0; z <= 1; z++) for (let x = -1; x <= 1; x++, j++) {
+    const cx = ix + x, cz = iz + z, ox = x + whf(cx, cz, s + 74) - fx, oz = z + whf(cx, cz, s + 75) - fz, d = sqrt(ox * ox + oz * oz);
+    BIOD[j] = d; if (d < d1) d1 = d;
+  }
   for (let i = 1; i < 8; i++) TB[i] = 0;
-  TB[1 + bioId(WORC[0], WORC[1])] += 0.5 + 0.5 * b;
-  TB[1 + bioId(WORC[2], WORC[3])] += 0.5 - 0.5 * b;
+  let sum = 0;
+  for (let z = -1, j = 0; z <= 1; z++) for (let x = -1; x <= 1; x++, j++) {
+    const w = sstep(BIOBAND, 0, BIOD[j] - d1);
+    if (w > 0) { TB[1 + bioId(ix + x, iz + z)] += w; sum += w; }
+  }
+  for (let i = 1; i < 8; i++) TB[i] /= sum;
 }
+const BIOBAND = 0.5, BIOD = new Float64Array(9);
 // seabed height h(x, z) in metres (sea surface at y = 0); also leaves the biome weights in TB
 function wheight(ax, az, lx, lz) {
   const s = WSEED;

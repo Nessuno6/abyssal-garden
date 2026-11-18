@@ -103,7 +103,7 @@ function subDrift(dt, hb) { const k = 1 - exp(-dt * 1.5); SUBM.vx -= SUBM.vx * k
 function subMove(dt, hb) {
   SUBM.x += SUBM.vx * dt; SUBM.y += SUBM.vy * dt; SUBM.z += SUBM.vz * dt;
   SUBM.x = clamp(SUBM.x, -WORLD_MAX, WORLD_MAX); SUBM.z = clamp(SUBM.z, -WORLD_MAX, WORLD_MAX);
-  SUBM.y = clamp(SUBM.y, -485, -hb[1] * SUB_LEN * 0.4);
+  SUBM.y = clamp(SUBM.y, -485, -hb[1] * SUB_LEN * 0.05); // it can surface: the upper hull out of the water
   const r = max(hb[0], hb[1]) * SUB_LEN * 0.85, fw = [sin(SUBM.yaw) * cos(SUBM.pit), sin(SUBM.pit), -cos(SUBM.yaw) * cos(SUBM.pit)], half = max(hb[2] * SUB_LEN - r, 0);
   const nd = nDyn; nDyn = 0; // rock and structures only (the moving capsules include this sub's own)
   for (const s of [-1, 0, 1]) {

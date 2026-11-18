@@ -253,12 +253,13 @@ function landmark(cx, cz) {
 }
 // the landmarks and minor features within draw distance this frame: instance records for the GPU grouped by mesh
 // (LMRUN: mesh, first instance, count per run), and the ones near enough to collide (NEARLM)
-const MAXLM = 256, LMV = new Array(MAXLM), LMD = new Float32Array(MAXLM * 16), NEARLM = new Array(16), LMTMP = new Array(MAXLM), LMRUN = new Int32Array(48 * 3), LMCNT = new Int32Array(48);
+const MAXLM = 512, LMV = new Array(MAXLM), LMD = new Float32Array(MAXLM * 16), NEARLM = new Array(16), LMTMP = new Array(MAXLM), LMRUN = new Int32Array(48 * 3), LMCNT = new Int32Array(48);
 let nLM = 0, nNear = 0, nRun = 0, nTmp = 0;
 function addLM(L, cx, cy, cz, R) {
   if (!L.k || nTmp >= MAXLM) return;
   const dh = hypot(L.x - cx, L.z - cz);
   if (dh > R + L.rad) return;
+  if (!L.cv && CVR.length && caveMouthNear(L.x, L.z, L.rad)) return; // set pieces keep clear of cave mouths
   LMTMP[nTmp++] = L;
   if (nNear < 16 && L.k !== 12 && hypot(dh, L.y - cy) < L.rad + 4) NEARLM[nNear++] = L;
 }
@@ -269,6 +270,8 @@ function updateLandmarks() {
   for (let gz = z0; gz <= z1; gz++) for (let gx = x0; gx <= x1; gx++) addLM(landmark(gx, gz), cx, cy, cz, R);
   x0 = floor((cx - R2) / MINOR); x1 = floor((cx + R2) / MINOR); z0 = floor((cz - R2) / MINOR); z1 = floor((cz + R2) / MINOR);
   for (let gz = z0; gz <= z1; gz++) for (let gx = x0; gx <= x1; gx++) { const A = minorFeatures(gx, gz); for (let i = 0; i < A.length; i++) addLM(A[i], cx, cy, cz, R2); }
+  // what grows in the caves nearby
+  for (const S of CVR) if (hypot(S.ox - cx, S.oz - cz) < R2 + CAVE_CELL * 0.75) for (const L of S.decor) if (abs(L.y - cy) < R2) addLM(L, cx, cy, cz, R2);
   netAvatars(); // other divers (LAN multiplayer)
   // counting sort by mesh id, so each mesh is one instanced draw
   LMCNT.fill(0);
@@ -282,7 +285,7 @@ function updateLandmarks() {
     LMD[b] = L.x - cx; LMD[b + 1] = L.y; LMD[b + 2] = L.z - cz; LMD[b + 3] = L.sc;
     LMD[b + 4] = L.q[0]; LMD[b + 5] = L.q[1]; LMD[b + 6] = L.q[2]; LMD[b + 7] = L.q[3];
     LMD[b + 8] = L.mat; LMD[b + 9] = L.seed; LMD[b + 10] = 1; LMD[b + 11] = 0;
-    LMD[b + 12] = 0; LMD[b + 13] = 1; LMD[b + 14] = 0; LMD[b + 15] = 0;
+    LMD[b + 12] = L.cv ? 98 : 0; LMD[b + 13] = 1; LMD[b + 14] = 0; LMD[b + 15] = L.cv ? L.open : 0; // 98: in a cave (d.w: daylight)
     LMV[j] = L;
   }
   nLM = o;
@@ -341,6 +344,14 @@ function sdScene(x, y, z) {
   const e = 0.35, h0 = hAt(x, z), hx = (hAt(x + e, z) - h0) / e, hz = (hAt(x, z + e) - h0) / e, il = 1 / sqrt(1 + hx * hx + hz * hz);
   let d = (y - h0) * il;
   GR[0] = -hx * il; GR[1] = il; GR[2] = -hz * il;
+  // caves are water inside the rock
+  if (CVR.length) {
+    let g0 = GR[0], g1 = GR[1], g2 = GR[2];
+    const dk = caveKnoll(x, y, z, true); // the rock knolls over the mouths
+    if (dk < d) { d = dk; g0 = GR[0]; g1 = GR[1]; g2 = GR[2]; } else { GR[0] = g0; GR[1] = g1; GR[2] = g2; }
+    const dc = caveWater(x, y, z, true);
+    if (dc > d) d = dc; else { GR[0] = g0; GR[1] = g1; GR[2] = g2; }
+  }
   for (let i = 0; i < nNear; i++) {
     const L = NEARLM[i], dl = sdLM(L, x, y, z);
     if (dl < d) {
@@ -1088,6 +1099,9 @@ async function loadTextures(m, R, maxTex, decode = true) {
     g.img = img;
     if (!img && decode) g.color = g.flat || g.color;
     delete g.texBytes;
+    // an emissive texture (glTF emissiveTexture): what glows, and in which colour
+    if (decodable(g.emiBytes) && decode) { try { g.eimg = await decodeTex(g.emiBytes, maxTex); } catch (err) { console.warn('model emission texture', err); } }
+    delete g.emiBytes;
   }
 }
 // any stored model record -> CPU model (with textures unless withTex is false)
@@ -1204,7 +1218,7 @@ function gltfDoc(J, bufs) {
     const m = (J.materials || [])[mi] || {}, pbr = m.pbrMetallicRoughness || {}, sg = m.extensions && m.extensions.KHR_materials_pbrSpecularGlossiness;
     const color = sg ? sg.diffuseFactor || [1, 1, 1, 1] : pbr.baseColorFactor || [1, 1, 1, 1], ti = sg ? sg.diffuseTexture && sg.diffuseTexture.index : pbr.baseColorTexture && pbr.baseColorTexture.index;
     const es = (m.extensions && m.extensions.KHR_materials_emissive_strength && m.extensions.KHR_materials_emissive_strength.emissiveStrength) || 1, ef = m.emissiveFactor || [0, 0, 0];
-    groups.push({ first, count: at - first, color, flat: color, cut: m.alphaMode && m.alphaMode !== 'OPAQUE' ? (m.alphaCutoff ?? 0.5) : 0, mat: m.name || '', emi: ef.map((v) => v * es), ...texInfo(ti) });
+    groups.push({ first, count: at - first, color, flat: color, cut: m.alphaMode && m.alphaMode !== 'OPAQUE' ? (m.alphaCutoff ?? 0.5) : 0, mat: m.name || '', emi: ef.map((v) => v * es), emiBytes: m.emissiveTexture ? texInfo(m.emissiveTexture.index).texBytes : undefined, ...texInfo(ti) });
   }
   // skeleton and animations: rest TRS of every node, parents, the skin's joints and inverse bind matrices, and each
   // animation's translation / rotation / scale channels

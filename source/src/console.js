@@ -77,7 +77,7 @@ function conRun(line) {
     case '': return '';
     case 'help': return ['/spawn <model | leviathan | school | manta | turtle | jelly | squid> [count]: in front of you',
       '/kill: remove what /spawn added', '/attack: the nearest imported leviathan lunges at you', '/roar, /hunt: its roar, or start hunting',
-      '/anim <clip>: the nearest animated model plays that clip', '/tp <x> <z> [y] | /tp leviathan | landmark | structure | biome',
+      '/anim <clip>: the nearest animated model plays that clip', '/tp <x> <z> [y] | /tp leviathan | landmark | structure | cave | surface | biome',
       '/sub: park your submarine in front of you; /hull <0-100>, /power <0-100>',
       '/mode survival | creative', '/list: loaded models and their clips', '/import <url> [class | auto]: add a model from a URL',
       '/clear: empty this log'].join('\n');
@@ -89,12 +89,14 @@ function conRun(line) {
     case 'anim': return a[0] ? cmdClip(a[0], -1, false) : 'which clip? /list shows them';
     case 'tp': {
       if (a[0] === 'leviathan') { toLeviathan(); return 'jumped to ' + jumpName; }
+      if (a[0] === 'cave') { toCave(); return 'jumped to ' + jumpName; }
+      if (a[0] === 'surface') { F[CY] = YTOP(); F[PIT] = 0.15; return 'at the surface'; }
       if (a[0] === 'landmark') { jump(7); return 'jumped to ' + jumpName; }
       if (a[0] === 'structure') { jump(8); return 'jumped to ' + jumpName; }
       if (a[0] === 'biome') { jump((+a[1] || 1) - 1); return 'jumped to ' + jumpName; }
       const x = +a[0], z = +a[1];
-      if (!isFinite(x) || !isFinite(z)) return 'tp <x> <z> [y], or tp leviathan | landmark | structure | biome <1-7>';
-      place(x, z); if (isFinite(+a[2]) && a[2] !== undefined) F[CY] = clamp(+a[2], hAt(x, z) + 1, -1.2);
+      if (!isFinite(x) || !isFinite(z)) return 'tp <x> <z> [y], or tp leviathan | landmark | structure | cave | surface | biome <1-7>';
+      place(x, z); if (isFinite(+a[2]) && a[2] !== undefined) F[CY] = clamp(+a[2], hAt(x, z) + 1, YTOP());
       return `at ${x.toFixed(0)}, ${F[CY].toFixed(0)}, ${z.toFixed(0)}`;
     }
     case 'mode': if (a[0] === 'survival' || a[0] === 'creative') { setMode(a[0]); if (a[0] === 'survival') conShow(false); return 'mode ' + a[0]; } return 'mode survival | creative';

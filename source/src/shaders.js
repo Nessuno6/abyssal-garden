@@ -111,13 +111,24 @@ fn bid(c: vec2i, s: u32) -> i32 {
   return select(select(select(select(select(select(6, 5, r < .87), 4, r < .74), 3, r < .6), 2, r < .46), 1, r < .32), 0, r < .19);
 }
 fn oh(i: i32, w: f32) -> BW { var o: BW; o.a = vec4f(f32(i == 0), f32(i == 1), f32(i == 2), f32(i == 3)) * w; o.b = vec4f(f32(i == 4), f32(i == 5), f32(i == 6), 0.) * w; return o; }
-// warped ~512 m Voronoi regions, one biome each, blended across a ~110 m band at the borders
+// warped ~512 m Voronoi regions, one biome each; soft Voronoi over the 9 nearby regions (math.js wbio), so borders
+// blend over ~250 m and three regions meet without a seam
 fn biomes(A: vec2i, l: vec2f, s: u32) -> BW {
   let q = l + (vec2f(fbm(A, l, 4, 3, s + 71u), fbm(A, l, 4, 3, s + 72u)) - .5) * 260.;
-  let w = worc(A, q, 2, s + 74u);
-  let b = ss(0., .22, w.d.y - w.d.x);
-  let p = oh(bid(w.c1, s), .5 + .5 * b); let r = oh(bid(w.c2, s), .5 - .5 * b);
-  var o: BW; o.a = p.a + r.a; o.b = p.b + r.b;
+  let p = q * (2. / 1024.); let fl = floor(p); let f = p - fl; let i = A * 2 + vec2i(fl);
+  var D: array<f32, 9>; var d1 = 9.;
+  for (var j = 0; j < 9; j++) {
+    let c = i + vec2i(j % 3 - 1, j / 3 - 1);
+    let o = vec2f(f32(j % 3 - 1) + hf(c.x, c.y, s + 74u), f32(j / 3 - 1) + hf(c.x, c.y, s + 75u)) - f;
+    D[j] = length(o); d1 = min(d1, D[j]);
+  }
+  var o: BW; o.a = vec4f(0.); o.b = vec4f(0.); var sum = 0.;
+  for (var j = 0; j < 9; j++) {
+    let w = ss(.5, 0., D[j] - d1);
+    let c = i + vec2i(j % 3 - 1, j / 3 - 1);
+    let e = oh(bid(c, s), w); o.a += e.a; o.b += e.b; sum += w;
+  }
+  o.a /= sum; o.b /= sum;
   return o;
 }
 struct HB { h: f32, a: vec4f, b: vec4f };
@@ -476,7 +487,8 @@ const WK = array<vec3f, 10>(vec3f(1., 2., 1.), vec3f(-2., 1., .9), vec3f(3., 1.,
 
 // ---------------------------------------------------------------- shared scene code
 const S_G = /*wgsl*/`
-struct G { vp: mat4x4f, sm: mat4x4f, cam: vec4f, right: vec4f, up: vec4f, fwd: vec4f, sun: vec4f, res: vec4f, mis: vec4f, wrap: vec4f, fog: vec4f, wat: vec4f, son: vec4f, sb: vec4f, sbh: vec4f };
+struct G { vp: mat4x4f, sm: mat4x4f, cam: vec4f, right: vec4f, up: vec4f, fwd: vec4f, sun: vec4f, res: vec4f, mis: vec4f, wrap: vec4f, fog: vec4f, wat: vec4f, son: vec4f, sb: vec4f, sbh: vec4f,
+  cav: vec4f, cm: array<vec4f, 8>, cl: array<vec4f, 8>, cc: array<vec4f, 8> };
 const SIG = vec3f(.058, .0235, .0195);
 const KD = vec3f(.056, .0245, .0170);
 const WCOL = vec3f(.16, .58, .90);
@@ -493,13 +505,64 @@ fn kd(z: f32) -> vec3f { return mix(KD, KDZ, z); }
 // depth used for light attenuation: true depth to 60 m, then 35 % of the rest
 fn dz(y: f32) -> f32 { let d = min(y, 0.); return select(d, -60. + (d + 60.) * .35, d < -60.); }
 // diver's lamp: a soft cone along the view, on from 70 m down (full at 150 m)
+// cave light sources (glowing fungi, crystals, vents): g.cl xyz render space + radius, g.cc colour; g.cav.y of them
+fn cavL(p: vec3f, n: vec3f) -> vec3f {
+  var s = vec3f(0.);
+  let nl = i32(g.cav.y);
+  for (var i = 0; i < nl; i++) {
+    let L = g.cl[i]; let v = L.xyz - p; let d2 = dot(v, v); let rr = L.w * L.w;
+    if (d2 < rr) { let d = sqrt(d2); let f = 1. - d2 / rr; s += g.cc[i].rgb * (f * f / (1. + d2 * .012)) * sat(dot(n, v / max(d, .001)) * .7 + .3); }
+  }
+  return s;
+}
+// signed distance to the nearest cave mouth (capsules g.cm: a.xyz + radius, b.xyz), g.cav.w of them; < 0 inside
+fn mouthD(p: vec3f) -> f32 {
+  var d = 1e9;
+  let nm = i32(g.cav.w);
+  for (var i = 0; i < nm; i++) {
+    let a = g.cm[i * 2]; let b = g.cm[i * 2 + 1].xyz;
+    let pa = p - a.xyz; let ba = b - a.xyz;
+    let h = sat(dot(pa, ba) / dot(ba, ba));
+    d = min(d, length(pa - ba * h) - a.w);
+  }
+  return d;
+}
+// the rock knolls over the mouths (cave.js cvMound without its noise): an ellipsoid set back over each tunnel
+fn knollD(p: vec3f) -> f32 {
+  var d = 1e9;
+  let nm = i32(g.cav.w);
+  for (var i = 0; i < nm; i++) {
+    let a = g.cm[i * 2]; let b = g.cm[i * 2 + 1].xyz; let r = a.w;
+    let u = normalize((b - a.xyz).xz + vec2f(1e-5, 0.));
+    let gp = a.xyz + vec3f(u.x * r * 1.8, -r * .2, u.y * r * 1.8);
+    let c = gp + vec3f(u.x * r, 0., u.y * r);
+    let q = (p - c) / vec3f(r * 2.2, r * 1.9, r * 2.2);
+    d = min(d, (length(q) - 1.) * r * 1.9);
+  }
+  return d;
+}
+// the sky over the sea (camera above the surface): blue gradient, sun disc and halo, a layer of slow clouds
+fn vh2(p: vec2f) -> f32 { let i = floor(p); let f = p - i; let u = f * f * (3. - 2. * f);
+  let a = hs(i.x + i.y * 57.); let b = hs(i.x + 1. + i.y * 57.); let c = hs(i.x + (i.y + 1.) * 57.); let d = hs(i.x + 1. + (i.y + 1.) * 57.);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y); }
+fn skyC(rd: vec3f) -> vec3f {
+  let y = max(rd.y, 0.); let mu = max(dot(rd, g.sun.xyz), 0.);
+  var c = mix(vec3f(.70, .82, .93), vec3f(.13, .34, .74), pow(y, .45)) * 1.5;
+  c += vec3f(1., .88, .66) * (pow(mu, 6.) * .3 + pow(mu, 60.) * .9) + vec3f(1., .97, .9) * ss(.9993, .9997, mu) * 30.;
+  if (rd.y > .015) {
+    let q = rd.xz / rd.y * 1.4 + vec2f(g.cam.w * .004, g.cam.w * .002) + g.wrap.xy * .0006;
+    let cl = ss(.48, .78, vh2(q) * .55 + vh2(q * 2.3 + 7.) * .3 + vh2(q * 5.1 + 3.) * .15) * ss(.015, .2, rd.y);
+    c = mix(c, vec3f(1.45, 1.45, 1.42) * (.8 + .4 * mu), cl * .85);
+  }
+  return c;
+}
 fn lamp(p: vec3f, n: vec3f) -> vec3f {
   // g.fog.z: your submarine's lights (on at any depth, brighter)
   let k = max(ss(-70., -150., g.cam.y), g.fog.z) * (1. + 1.5 * g.fog.z);
-  if (k <= 0.) { return vec3f(0.); }
+  if (k <= 0.) { return cavL(p, n); }
   let v = g.cam.xyz - p; let d = length(v); let l = v / max(d, 1e-3);
   let cone = ss(.72, .96, dot(-l, g.fwd.xyz));
-  return vec3f(.85, .95, 1.) * k * 2.4 * (.2 + .8 * cone) * sat(dot(n, l) * .8 + .2) * exp(-.03 * d) / (1. + .005 * d * d);
+  return vec3f(.85, .95, 1.) * k * 2.4 * (.2 + .8 * cone) * sat(dot(n, l) * .8 + .2) * exp(-.03 * d) / (1. + .005 * d * d) + cavL(p, n);
 }
 fn sg(z: f32) -> vec3f { return mix(SIG, vec3f(.034, .026, .022), z); }
 fn fin(c: vec3f) -> vec4f { return vec4f(min(max(c, vec3f(0.)), vec3f(40.)), 1.); }
@@ -512,7 +575,8 @@ fn fogIn(ro: vec3f, rd: vec3f, d: f32, z: f32, sun: vec3f) -> vec3f {
   let I = (1. - exp(-a * d)) / a;
   let mu = max(dot(rd, sun), 0.);
   let m2 = mu * mu;
-  return wcol(z) * sg(z) * exp(k * dz(ro.y)) * I * (1.22 + .3 * m2 * m2);
+  // g.cav.x: how far the camera is inside a cave (the water there gets no daylight)
+  return wcol(z) * sg(z) * exp(k * dz(ro.y)) * I * (1.22 + .3 * m2 * m2) * (1. - .93 * g.cav.x);
 }
 `;
 
@@ -574,6 +638,8 @@ fn side(p: vec3f, n: vec3f, open: f32, z: f32) -> vec3f { return mix(WCOL, PCOL,
 fn fog(c: vec3f, wp: vec3f, z: f32) -> vec3f {
   // optical distance: g.wat.w is the biome's murk (vents thick, reefs clear)
   let v = wp - g.cam.xyz; let d = length(v); let rd = v / d; let ds = d * g.fog.y * g.wat.w;
+  // above the surface: a light sea haze (anything under the water is behind the opaque surface)
+  if (g.cam.y > 0.) { let a = exp(-d * .0004); return c * a + skyC(vec3f(rd.x, max(rd.y, .02), rd.z)) * .75 * (1. - a); }
   return c * exp(-sg(z) * ds) * ss(g.fog.x, g.fog.x * .8, d) + fogIn(g.cam.xyz, rd, ds, z, g.sun.xyz) * (.92 - .26 * z);
 }
 fn qrot(q: vec4f, v: vec3f) -> vec3f { return v + 2. * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
@@ -589,11 +655,17 @@ struct VO { @builtin(position) cp: vec4f, @location(0) wp: vec3f, @location(1) n
   var o: VO;
   var sc = i.a.w;
   // population instances shrink away before their cull distance, so nothing pops
-  if (i.d.w > 1.5 && g.res.x > 0.) { sc *= 1. - ss(i.d.w * .7, i.d.w, distance(i.a.xyz, g.cam.xyz) / g.mis.z); }
+  if (i.d.w > 1.5 && g.res.x > 0.) { sc *= 1. - ss(i.d.w * .7, i.d.w, distance(i.a.xyz, g.cam.xyz) / g.mis.z); if (min(mouthD(i.a.xyz), knollD(i.a.xyz) + 3.) < i.a.w * .5) { sc = 0.; } }
   var w = i.a.xyz + qrot(i.b, i.p * sc);
   w.y += sin(g.cam.w * .3 + i.c.y * 40.) * i.c.w;
   o.cp = g.vp * vec4f(w, 1.); o.wp = w; o.n = qrot(i.b, i.n.xyz); o.op = i.p * i.a.w + i.c.y * 37.; o.on = i.n.xyz;
   o.m = i.c; o.q = i.b; o.ao = i.n.w; o.bio = vec4f(0., 0., i.d.z, .85); o.bio2 = vec4f(0., 0., max(i.d.y - 1., 0.), 0.);
+  // caves (d.x): 99 + theme (0 fungus, 1 crystal, 2 lava) for the walls (n.w = daylight reaching the vertex), 98 for
+  // the things growing in them (d.w = daylight there)
+  if (i.d.x > 98.5) {
+    let th = i.d.x - 99.;
+    o.ao = 1.; o.bio = vec4f(0., 0., select(0., .8, th < .5), i.n.w); o.bio2 = vec4f(0., select(0., .8, th > .5 && th < 1.5), select(0., 1., th > 1.5), 2.);
+  } else if (i.d.x > 97.5) { o.bio.w = i.d.w; o.bio2.w = 1.; }
   return o;
 }
 // clipmap terrain: level = instance index, the grid vertex from the vertex index, height from the level's texture
@@ -618,7 +690,7 @@ struct VO { @builtin(position) cp: vec4f, @location(0) wp: vec3f, @location(1) n
   let p = vec3f(L.x + f32(i) * L.z, t.x, L.y + f32(j) * L.z);
   let n = normalize(vec3f(t.y, sqrt(max(1. - t.y * t.y - t.z * t.z, .01)), t.z));
   o.cp = g.vp * vec4f(p, 1.); o.wp = p; o.n = n; o.on = n; o.op = WP(p);
-  o.m = vec4f(0., 0., 1., 0.); o.q = vec4f(0., 0., 0., 1.); o.ao = 1.; o.bio = vec4f(b.x, b.y, b.z, t.w); o.bio2 = vec4f(x.x, x.y, b.w, 0.);
+  o.m = vec4f(0., 0., 1., 0.); o.q = vec4f(0., 0., 0., 1.); o.ao = 1.; o.bio = vec4f(b.x, b.y, b.z, t.w); o.bio2 = vec4f(x.x, x.y, b.w, -1.);
   return o;
 }
 struct TP { h: f32, c: f32, n: vec3f };
@@ -633,7 +705,7 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
   return o;
 }
 @fragment fn fs(i: VO, @builtin(front_facing) ff: bool) -> @location(0) vec4f {
-  let mat = i32(i.m.x + .5); let sd = i.m.y; let fl_ = select(-1., 1., ff || mat == 0);
+  let mat = i32(i.m.x + .5); let sd = i.m.y; let cwall = i.bio2.w > 1.5; let fl_ = select(-1., 1., ff || mat == 0 || cwall);
   let on = normalize(i.on) * fl_; let n0 = normalize(i.n) * fl_;
   let dist = length(i.wp - g.cam.xyz);
   // flat facet normal from screen derivatives (crystals), and the crystal growth-band sample: both taken outside the
@@ -761,9 +833,19 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
   let N = select(N0, fN, mat == 7);
   let L = g.sun.xyz; let V = normalize(g.cam.xyz - i.wp);
   let sky = sat(occ * 1.3); let open = sat(occ * 1.2 - .1);
-  let ao = (.25 + .75 * sat(occ * 1.4 - .05)) * vao * mix(ss(.12, .6, hgt), .85, sandK);
+  let ao = (.25 + .75 * sat(occ * 1.4 - .05)) * vao * mix(ss(.12, .6, hgt), .85, sandK) * select(1., .1 + .9 * occ, i.bio2.w > .5);
   let z = mix(zone(i.wp), gm.z, .3);
-  let E = sunE(i.wp.y, z) * shadow9(i.wp + n0 * .35);
+  // in caves daylight only reaches near the mouths (occ); the walls glow with the cave's theme colour
+  let E = sunE(i.wp.y, z) * shadow9(i.wp + n0 * .35) * select(1., occ * occ, i.bio2.w > .5);
+  if (cwall) {
+    let tc = select(select(vec3f(.25, 1., .8), vec3f(.8, .3, 1.), gm.z > .3), vec3f(1., .38, .07), i.bio2.z > .5);
+    // glowing growths in patches (large-scale patterns only: the small detail textures would show their tiling)
+    let spots = ss(.76, .8, big2 * .6 + A.h * .5) * ss(.45, .75, A.c) * ss(.3, .6, hgt);
+    let moss = flt * ss(.62, .72, big * .7 + A.c * .4) * ss(.5, .7, B.h);
+    emi += tc * (spots * .55 + moss * .12) * (1. - occ) * (.8 + .2 * sin(g.cam.w * .9 + big * 30.));
+    alb *= .75;
+    bump = .6; sgro = 0.;
+  }
   let ndl = sat(dot(N, L));
   let am = (amb(i.wp, N, sky, z) + side(i.wp, N, open, z)) * ao + lamp(i.wp, N) * (1. - ao); // the lamp reaches into occluded places
   let dl = E * ndl * (.10 + mix(vec3f(.33), ca, ss(.1, .45, dot(n0, L))) * 2.5);
@@ -771,6 +853,8 @@ fn tri(p: vec3f, n: vec3f, s: f32) -> TP {
   let H = normalize(V + L);
   c += E * (.25 + ca) * pow(sat(dot(N, H)), mix(10., 70., gloss)) * gloss * ndl * 1.8;
   c += (amb(i.wp, reflect(-V, N), sky, z) + side(i.wp, reflect(-V, N), open, z)) * ao * (.08 + gloss) * .6 * pow(1. - sat(dot(N, V)), 2.5);
+  // the seabed opens at cave mouths
+  if (i.bio2.w < -.5 && mouthD(i.wp) < -.3) { discard; }
   // lit by the local biome, fogged by the camera's (so distant terrain melts into the same background)
   return fin(fog(c, i.wp, zone(i.wp)));
 }
@@ -853,6 +937,7 @@ fn leafV(vi: u32, A: vec4f, Bv: vec4f, ty: i32, s1: f32, s2: f32, bend: f32) -> 
   p.x += sw.x; p.z += sw.y;
   o.cp = g.vp * vec4f(p, 1.); o.wp = p; o.n = normalize(N2 + S * u * .55 - T0 * cos(v * 10. + s2 * 30. + t * .6) * u * .7 * nearK); o.uv = vec2f(u, v);
   // no plants inside your submarine's hull (g.sb: centre in render space + heading, g.sbh: half length, width, height)
+  if (min(mouthD(A.xyz), knollD(A.xyz) + 3.) < 1.5) { o.cp = vec4f(0., 0., -1., 1.); }
   if (g.sbh.x > 0.) {
     let r = A.xyz - g.sb.xyz; let ca = cos(g.sb.w); let sa = sin(g.sb.w);
     let q = vec3f(r.x * ca - r.z * sa, r.y, r.x * sa + r.z * ca); // into the sub's frame (inverse of its yaw quaternion)
@@ -1212,15 +1297,27 @@ struct VO { @builtin(position) cp: vec4f, @location(0) wp: vec3f };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> VO {
   var o: VO;
   let p = vec2f(f32(i & 1u), f32(i >> 1u)) * 2. - 1.;
-  o.wp = vec3f(p.x * g.fog.x * 1.1, 0., p.y * g.fog.x * 1.1);
+  let R = select(g.fog.x * 1.1, 9000., g.cam.y > 0.); // from above, the sea reaches the horizon
+  o.wp = vec3f(p.x * R, 0., p.y * R);
   o.cp = g.vp * vec4f(o.wp, 1.);
   return o;
+}
+// the sea seen from above: sky reflected with Fresnel, the deep body colour of the local water, the sun's glitter
+fn seaTop(V: vec3f, s: vec2f, d: f32) -> vec3f {
+  let nu = normalize(vec3f(s.x * .45, 1., s.y * .45));
+  let ci = sat(dot(-V, nu));
+  let fr = .02 + .98 * pow(1. - ci, 5.);
+  let R = reflect(V, nu);
+  let refl = skyC(vec3f(R.x, abs(R.y), R.z));
+  let body = g.wat.rgb * vec3f(.05, .09, .12) * (1. + .6 * pow(sat(dot(-V, g.sun.xyz)), 2.)) + vec3f(.004, .02, .03);
+  return mix(body, refl, fr) + vec3f(1., .93, .8) * (pow(sat(dot(R, g.sun.xyz)), 350.) * 30. + pow(sat(dot(R, g.sun.xyz)), 40.) * .4);
 }
 @fragment fn fs(i: VO) -> @location(0) vec4f {
   let v = i.wp - g.cam.xyz; let d = length(v); let V = v / d;
   let fl = ss(260., 60., d);
   let W = WP(i.wp);
   let s = (textureSample(tW, sR, W.xz * (79. / 1024.)).ba + textureSample(tW, sR, W.zx * (218. / 1024.) + .2).ba * .7 + textureSample(tW, sR, W.xz * (28. / 1024.) + .6).ba * .8) * fl;
+  if (g.cam.y > 0.) { return fin(fog(seaTop(V, s, d), i.wp, 0.)); }
   let n = normalize(vec3f(-s.x * .8, -1., -s.y * .8));
   let ci = sat(dot(V, -n));
   let k = 1. - 1.769 * (1. - ci * ci);
@@ -1244,7 +1341,13 @@ struct VO { @builtin(position) cp: vec4f, @location(0) wp: vec3f };
   return o;
 }
 @fragment fn fsB(i: VO) -> @location(0) vec4f {
-  let p = g.cam.xyz + normalize(i.wp - g.cam.xyz) * g.fog.x;
+  let rd = normalize(i.wp - g.cam.xyz);
+  // above the surface: sky, and past the sea quad the open sea to the horizon
+  if (g.cam.y > 0.) {
+    if (rd.y >= 0.) { return fin(skyC(rd)); }
+    return fin(mix(seaTop(rd, vec2f(0.), 9000.), skyC(vec3f(rd.x, .02, rd.z)) * .75, ss(-.08, 0., rd.y)));
+  }
+  let p = g.cam.xyz + rd * g.fog.x;
   return fin(fog(vec3f(0.), p, zone(p)));
 }
 `;
@@ -1325,6 +1428,7 @@ const W_RAYS = S_G + W_FS + /*wgsl*/`
 const RF = ${RAYDIV}.;
 @fragment fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
   let dp = textureLoad(tDp, min(vec2i(fc.xy * RF), vec2i(textureDimensions(tDp)) - 1), 0);
+  if (g.cam.y > 0.) { return vec4f(0., 0., 0., min(g.fwd.w / max(dp, 1e-6), 6e4)); }
   let uv = fc.xy * RF * g.res.zw;
   let nd = vec2f(uv.x * 2. - 1., 1. - uv.y * 2.);
   let rv = g.fwd.xyz + g.right.xyz * (nd.x * g.right.w) + g.up.xyz * (nd.y * g.up.w);
@@ -1349,7 +1453,7 @@ const RF = ${RAYDIV}.;
   let mu = max(dot(rd, sx), 0.);
   let ph = mix(.2 + 2.0 * mu * mu * mu, .5, g.sun.w);
   let wc = g.wat.rgb + mix(vec3f(.04, .07, .05), vec3f(.28, .16, .12), g.sun.w);
-  return vec4f(min(acc * dt * sgz * wc * SUNC * ph * g.mis.y * (1. - .78 * g.sun.w), vec3f(20.)), zl);
+  return vec4f(min(acc * dt * sgz * wc * SUNC * ph * g.mis.y * (1. - .78 * g.sun.w) * (1. - g.cav.x), vec3f(20.)), zl);
 }
 `;
 // depth-aware 3x3 blur of the low-res shafts (hides the sampling dither)
@@ -1376,6 +1480,7 @@ const W_POST = S_G + W_FS + /*wgsl*/`
 @group(0) @binding(3) var tR: texture_2d<f32>;
 @group(0) @binding(4) var tB: texture_2d<f32>;
 @group(0) @binding(5) var tDp: texture_depth${AA > 1 ? '_multisampled' : ''}_2d;
+@group(0) @binding(6) var tDs: texture_depth${AA > 1 ? '_multisampled' : ''}_2d; // depth before the flora (sonar)
 const RF = ${RAYDIV}.;
 fn tmap(x: vec3f) -> vec3f { return sat3((x * (2.51 * x + .03)) / (x * (2.43 * x + .59) + .14)); }
 fn sat3(x: vec3f) -> vec3f { return clamp(x, vec3f(0.), vec3f(1.)); }
@@ -1401,12 +1506,14 @@ fn sat3(x: vec3f) -> vec3f { return clamp(x, vec3f(0.), vec3f(1.)); }
   // sonar pulse (from your submarine): a ring that sweeps out at 110 m/s, outlining rock, creatures and structures in
   // cyan as it passes; the outlines it leaves fade over a few seconds (g.son: origin in render space, age in seconds)
   if (g.son.w >= 0. && g.son.w < 6.) {
+    // the pulse passes through kelp, grass and algae: it reads the depth of the rock and creatures only
+    let zf = min(g.fwd.w / max(textureLoad(tDs, px, 0), 1e-6), 6e4);
     let nd = vec2f(uv.x * 2. - 1., 1. - uv.y * 2.);
     let ray = g.fwd.xyz + nd.x * g.right.w * g.right.xyz + nd.y * g.up.w * g.up.xyz;
     let D = distance(g.cam.xyz + ray * zf, g.son.xyz); let R = g.son.w * 110.;
     let mxp = vec2i(textureDimensions(tS)) - 1;
-    let zr = min(g.fwd.w / max(textureLoad(tDp, min(px + vec2i(1, 0), mxp), 0), 1e-6), 6e4);
-    let zu = min(g.fwd.w / max(textureLoad(tDp, min(px + vec2i(0, 1), mxp), 0), 1e-6), 6e4);
+    let zr = min(g.fwd.w / max(textureLoad(tDs, min(px + vec2i(1, 0), mxp), 0), 1e-6), 6e4);
+    let zu = min(g.fwd.w / max(textureLoad(tDs, min(px + vec2i(0, 1), mxp), 0), 1e-6), 6e4);
     let edge = ss(.015, .1, (abs(zr - zf) + abs(zu - zf)) / max(zf, 1.));
     let band = exp(-pow((D - R) / 6., 2.));
     let seen = select(0., exp(-(g.son.w - D / 110.) * .8), D < R);
@@ -1536,6 +1643,7 @@ const W_CUST = S_B + /*wgsl*/`
 // material: base colour + alpha cut-off, emission
 struct MT { c: vec4f, e: vec4f };
 @group(2) @binding(1) var<uniform> mt: MT;
+@group(2) @binding(2) var tE: texture_2d<f32>; // emissive texture (1x1 white when the material has none)
 // skinned models: joint matrices of every pose this frame (main.js skinPose); an instance's pose starts at d.x
 @group(3) @binding(0) var<storage, read> JM: array<mat4x4f>;
 // instance: a (position, scale), b (rotation), c (class, seed, phase, speed), d (pose index or -1, tint rgb or 0)
@@ -1569,7 +1677,7 @@ fn placeC(i: CI, l: vec3f, n: vec3f) -> CO {
   return placeC(i, l, i.n.xyz);
 }
 @fragment fn fsC(i: CO, @builtin(front_facing) ff: bool) -> @location(0) vec4f {
-  let tx = textureSample(tA, sR, i.uv);
+  let tx = textureSample(tA, sR, i.uv); let te = textureSample(tE, sR, i.uv).rgb;
   let dist = length(i.wp - g.cam.xyz);
   let ca = caus(i.wp, dist);
   if (mt.c.w > 0. && tx.a < mt.c.w) { discard; }
@@ -1580,7 +1688,7 @@ fn placeC(i: CI, l: vec3f, n: vec3f) -> CO {
   var c = alb * (E * sat(dot(n, L)) * (.25 + ca) + amb(i.wp, n, .9, z) * 1.15 + side(i.wp, n, .8, z) * .6);
   c += E * pow(sat(dot(n, normalize(V + L))), 32.) * .25;
   // inside a submarine: the cabin light (g.fog.w), and every material's own glow
-  c += alb * g.fog.w + mt.e.rgb;
+  c += alb * g.fog.w + mt.e.rgb * te;
   return fin(fog(c, i.wp, z));
 }
 `;

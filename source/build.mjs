@@ -18,7 +18,7 @@ const dist = path.join(here, '..', 'dist');
 mkdirSync(path.join(dist, 'icons'), { recursive: true });
 // concatenation order matters: quality.js picks the tier (and requests the adapter) before shaders.js bakes it in;
 // audio.js comes before main.js so its state exists before main.js attaches the input handlers
-const FILES = ['quality.js', 'math.js', 'shaders.js', 'world.js', 'audio.js', 'net.js', 'console.js', 'sub.js', 'main.js'];
+const FILES = ['quality.js', 'math.js', 'shaders.js', 'world.js', 'cave.js', 'audio.js', 'net.js', 'console.js', 'sub.js', 'main.js'];
 // the app version (update checks) comes from the Tauri config, the one place it is set
 const APP_VERSION = JSON.parse(readFileSync(path.join(here, 'src-tauri', 'tauri.conf.json'), 'utf8')).version;
 const readable = process.argv.includes('--readable');
@@ -26,7 +26,10 @@ const readable = process.argv.includes('--readable');
 // the player's animated diver (made in Blender from 'Diver' by nolanfa, CC-BY-4.0), bundled as base64 when present
 const DIVER = path.join(here, 'assets', 'diver_swim.glb');
 const DIVER_GLB = existsSync(DIVER) ? readFileSync(DIVER).toString('base64') : '';
-let js = `const APP_VERSION = '${APP_VERSION}';\nconst DIVER_GLB = '${DIVER_GLB}';\n` + FILES.map((f) => readFileSync(path.join(here, 'src', f), 'utf8')).join('\n');
+// the built-in leviathans (made in Blender for the game; textures shrunk from leviathan_anim.glb into leviathan.glb)
+const LEVF = path.join(here, 'assets', 'leviathan.glb');
+const LEV_GLB = existsSync(LEVF) ? readFileSync(LEVF).toString('base64') : '';
+let js = `const APP_VERSION = '${APP_VERSION}';\nconst DIVER_GLB = '${DIVER_GLB}';\nconst LEV_GLB = '${LEV_GLB}';\n` + FILES.map((f) => readFileSync(path.join(here, 'src', f), 'utf8')).join('\n');
 const tpl = readFileSync(path.join(here, 'template.html'), 'utf8');
 // everything runs inside one async function; startup errors are shown on screen
 const wrap = (body) => `if(!self.__DEVGO)(async()=>{${body}\n})().catch(e=>{console.error(e);document.body.className='l e';document.getElementById('s').textContent=(e.cause?'':'Failed to start: ')+e.message});`;

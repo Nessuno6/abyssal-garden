@@ -54,8 +54,35 @@ const tCX = tex(CM + 1, CM + 1, 'rgba8unorm', TU.STORAGE_BINDING | TU.TEXTURE_BI
 const arrView = (t) => t.createView({ dimension: '2d-array' });
 
 // uniforms (layouts in shaders.js)
-const UB = new Float32Array(84), UBS = new Float32Array(84); // G: 21 vec4 (sonar pulse, your sub's hull box)
-const ubo = ebuf(336, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(336, BU.UNIFORM | BU.COPY_DST);
+const UB = new Float32Array(184), UBS = new Float32Array(184); // G: 46 vec4 (sonar pulse, your sub's hull box, caves)
+const ubo = ebuf(736, BU.UNIFORM | BU.COPY_DST), uboS = ebuf(736, BU.UNIFORM | BU.COPY_DST);
+// caves (cave.js): 3 resident systems, each with a fixed share of one vertex / index buffer and one instance record
+const CV_SLOTS = 3, CV_VCAP = 200000, CV_ICAP = 600000, cvVB = ebuf(CV_SLOTS * CV_VCAP * 16, BU.VERTEX | BU.COPY_DST), cvIB = ebuf(CV_SLOTS * CV_ICAP * 4, BU.INDEX | BU.COPY_DST);
+const CVI = new Float32Array(CV_SLOTS * 16), cvInst = ebuf(CV_SLOTS * 64, BU.VERTEX | BU.COPY_DST), CVSLOT = new Array(CV_SLOTS).fill(null);
+function caveUpload(S) {
+  let k = CVSLOT.indexOf(null);
+  if (k < 0) { let far = -1, fd = -1; for (let i = 0; i < CV_SLOTS; i++) { const d = hypot(CVSLOT[i].ox - F[CX], CVSLOT[i].oz - F[CZ]); if (d > fd) { fd = d; far = i; } } const O = CVSLOT[far]; O.vb = O.ib = null; O.decor = O.lights = null; CVR.splice(CVR.indexOf(O), 1); k = far; }
+  const nv = min(S.nv, CV_VCAP); let ni = min(S.ni, CV_ICAP); ni -= ni % 3;
+  if (S.nv > CV_VCAP || S.ni > CV_ICAP) console.warn('cave mesh over capacity', S.nv, S.ni);
+  let ib = S.ib.subarray(0, ni);
+  if (nv < S.nv) { ib = ib.slice(); for (let i = 0; i < ni; i += 3) if (ib[i] >= nv || ib[i + 1] >= nv || ib[i + 2] >= nv) ib[i] = ib[i + 1] = ib[i + 2] = 0; }
+  Q.writeBuffer(cvVB, k * CV_VCAP * 16, S.vb, 0, nv * 16); Q.writeBuffer(cvIB, k * CV_ICAP * 4, ib);
+  S.slot = k; S.dni = ni; CVSLOT[k] = S;
+}
+function caveDrop(S) { const k = CVSLOT.indexOf(S); if (k >= 0) CVSLOT[k] = null; }
+function drawCaves(r) {
+  let any = false;
+  for (let k = 0; k < CV_SLOTS; k++) {
+    const S = CVSLOT[k], o = k * 16; if (!S) continue; any = true;
+    CVI[o] = S.ox - F[CX]; CVI[o + 1] = 0; CVI[o + 2] = S.oz - F[CZ]; CVI[o + 3] = 1; CVI[o + 4] = 0; CVI[o + 5] = 0; CVI[o + 6] = 0; CVI[o + 7] = 1;
+    CVI[o + 8] = 1; CVI[o + 9] = S.seed; CVI[o + 10] = 1; CVI[o + 11] = 0; CVI[o + 12] = 99 + S.theme; CVI[o + 13] = 1; CVI[o + 14] = 0; CVI[o + 15] = 0;
+  }
+  if (!any) return;
+  Q.writeBuffer(cvInst, 0, CVI);
+  r.setVertexBuffer(0, cvVB); r.setVertexBuffer(1, cvInst); r.setIndexBuffer(cvIB, 'uint32');
+  for (let k = 0; k < CV_SLOTS; k++) { const S = CVSLOT[k]; if (S) r.drawIndexed(S.dni, 1, k * CV_ICAP, k * CV_VCAP, k); }
+  r.setVertexBuffer(0, vbMesh); r.setIndexBuffer(ibMesh, 'uint32');
+}
 const WTU = new Float32Array(4), uboW = ebuf(16, BU.UNIFORM | BU.COPY_DST);
 const LVD = new Float32Array(32), lvBuf = ebuf(128, BU.UNIFORM | BU.COPY_DST);
 const wtBuf = ebuf(1088, BU.UNIFORM | BU.COPY_DST);
@@ -95,7 +122,7 @@ const bg1 = device.createBindGroup({ layout: bgl1, entries: [
   { binding: 3, resource: { buffer: kvBuf } }, { binding: 4, resource: { buffer: tvBuf } }, { binding: 5, resource: { buffer: wtBuf } }, { binding: 6, resource: arrView(tCX) }] });
 const pl0 = device.createPipelineLayout({ bindGroupLayouts: [bgl0, bgl1] });
 // imported models: group 2 = material (base-colour texture, colour + alpha cutout)
-const bglT = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: SS.FRAGMENT, texture: {} }, { binding: 1, visibility: SS.FRAGMENT, buffer: {} }] });
+const bglT = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: SS.FRAGMENT, texture: {} }, { binding: 1, visibility: SS.FRAGMENT, buffer: {} }, { binding: 2, visibility: SS.FRAGMENT, texture: {} }] });
 const plC = device.createPipelineLayout({ bindGroupLayouts: [bgl0, bgl1, bglT] });
 const bglJ = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: SS.VERTEX, buffer: { type: 'read-only-storage' } }] });
 const plCS = device.createPipelineLayout({ bindGroupLayouts: [bgl0, bgl1, bglT, bglJ] });
@@ -253,6 +280,17 @@ if (DIVER_GLB) {
     fm.cls = 'player'; PLAYER = CUSTOM.length; CUSTOM.push(fm);
   } catch (err) { console.warn('diver model', err); }
 }
+// the built-in leviathans' model (assets/leviathan.glb, made in Blender: skinned, swim / fast / idle / attack / roar);
+// without it they fall back to the procedural serpent (meshLeviathan + vsLev)
+let LEVM = -1, LEVC = null;
+if (LEV_GLB) {
+  try {
+    const fm = finishModel(await parseModelRecord({ name: 'leviathan', type: 'glb', data: unb64(LEV_GLB).buffer }, TX.model), 'l', 'leviathan');
+    fm.cls = 'levb'; LEVM = CUSTOM.length; CUSTOM.push(fm);
+    const an = fm.skin ? fm.skin.anims : [], f = (n) => max(0, an.findIndex((a) => a.name === n));
+    LEVC = { swim: f('swim'), fast: f('fast'), idle: f('idle'), lure: f('lure'), flare: f('flare'), attack: f('attack'), roar: f('roar'), turn: f('turn') };
+  } catch (err) { console.warn('leviathan model', err); }
+}
 await say('Building set pieces…', 0.3, 1500);
 // mesh ids: 0-3 rocks, 4-6 sponges, 7-8 coral, 9 tube sponge, 10-13 far rocks, 14-15 far coral, 16 whale fluke, 17 ship,
 // 18 manta, 19 fish, 20 rock arch, 21 table coral, 22 brain coral, 23 mushroom, 24 natural bridge, 25 turtle, 26 jellyfish,
@@ -305,23 +343,25 @@ const ibGrid = buf(gidx, BU.INDEX);
 const pMipS = blitPipe('fsMip', 'rgba8unorm-srgb');
 const tWhite = tex(1, 1, 'rgba8unorm-srgb', TU.TEXTURE_BINDING | TU.COPY_DST);
 Q.writeTexture({ texture: tWhite }, new Uint8Array([255, 255, 255, 255]), { bytesPerRow: 4 }, [1, 1]);
+// an image as an sRGB texture with its mips
+function imgTex(img) {
+  const w = img.width, h = img.height, mips = floor(Math.log2(max(w, h))) + 1;
+  const t = tex(w, h, 'rgba8unorm-srgb', TU.TEXTURE_BINDING | TU.COPY_DST | TU.RENDER_ATTACHMENT, { mips });
+  Q.copyExternalImageToTexture({ source: img }, { texture: t }, [w, h]);
+  const e = device.createCommandEncoder();
+  for (let i = 1; i < mips; i++) {
+    const r = e.beginRenderPass({ colorAttachments: [colorAtt(t.createView({ baseMipLevel: i, mipLevelCount: 1 }), true)] });
+    r.setPipeline(pMipS); r.setBindGroup(0, blitBG(t.createView({ baseMipLevel: i - 1, mipLevelCount: 1 }))); r.draw(3); r.end();
+  }
+  Q.submit([e.finish()]);
+  return t;
+}
 const MODELS = CUSTOM.map((m) => {
   const groups = m.groups.map((gr) => {
-    let t = tWhite;
-    if (gr.img) {
-      const w = gr.img.width, h = gr.img.height, mips = floor(Math.log2(max(w, h))) + 1;
-      t = tex(w, h, 'rgba8unorm-srgb', TU.TEXTURE_BINDING | TU.COPY_DST | TU.RENDER_ATTACHMENT, { mips });
-      Q.copyExternalImageToTexture({ source: gr.img }, { texture: t }, [w, h]);
-      const e = device.createCommandEncoder();
-      for (let i = 1; i < mips; i++) {
-        const r = e.beginRenderPass({ colorAttachments: [colorAtt(t.createView({ baseMipLevel: i, mipLevelCount: 1 }), true)] });
-        r.setPipeline(pMipS); r.setBindGroup(0, blitBG(t.createView({ baseMipLevel: i - 1, mipLevelCount: 1 }))); r.draw(3); r.end();
-      }
-      Q.submit([e.finish()]);
-    }
+    const t = gr.img ? imgTex(gr.img) : tWhite, te = gr.eimg ? imgTex(gr.eimg) : tWhite;
     const c = gr.img ? gr.color : gr.color.map((v, i) => (i < 3 ? v * m.tint[i] : v));
     const e = gr.emi || [0, 0, 0], ub = buf(new Float32Array([c[0], c[1], c[2], gr.cut, e[0], e[1], e[2], 0]), BU.UNIFORM);
-    return { first: gr.first, count: gr.count, glass: /glass|canopy|window|windshield/i.test(gr.mat || ''), bg: device.createBindGroup({ layout: bglT, entries: [{ binding: 0, resource: t.createView() }, { binding: 1, resource: { buffer: ub } }] }) };
+    return { first: gr.first, count: gr.count, glass: /glass|canopy|window|windshield/i.test(gr.mat || ''), bg: device.createBindGroup({ layout: bglT, entries: [{ binding: 0, resource: t.createView() }, { binding: 1, resource: { buffer: ub } }, { binding: 2, resource: te.createView() }] }) };
   });
   return { vb: buf(new Uint8Array(m.vb), BU.VERTEX), ib: buf(m.ib, BU.INDEX), sb: m.skin ? buf(m.skin.sk, BU.VERTEX) : null, groups, n0: 0, n: 0, pb: 0 };
 });
@@ -359,12 +399,41 @@ function ciPut(m, x, y, z, sc, qx, qy, qz, qw, cls, seed, ph, sp, pose = -2, tin
     }
   }
 }
+// the built-in leviathans with the Blender model (the lantern leviathan): the head on the swim path (leviathanHeads /
+// vsLev), the body along the chord behind it. What it does:
+//   patrolling: swims, now and then curls through a tight turn;
+//   stalking you: flares its frills and splays its jaws, roars, then circles fast; lunges (attack) when its head
+//   passes within 30 m of you;
+//   hunting a school: swings its glowing lure in front of its mouth, between fast stretches; moving off: fast
+function levPut() {
+  const LG = NSCH + NMAN + NJEL + NTUR;
+  for (let i = 0; i < NLEV; i++) {
+    const fade = WTD[224 + i * 4 + 3]; if (!(fade > 0.01)) continue;
+    const o = i * 8, R = LB.lev[o + 3], w = LB.lev[o + 5], len = LB.lev[o + 6], ph = LB.lev[o + 7], sg = w < 0 ? -1 : 1, a0 = F[TIME] * w + LB.lev[o + 4];
+    const P = (a) => [LEV[i * 4] + R * cos(a), LEV[i * 4 + 1] + 5 * sin(0.45 * a + ph), LEV[i * 4 + 2] + R * 0.85 * sin(a)];
+    const h = P(a0), t = P(a0 - sg * len / R);
+    let fx = h[0] - t[0], fy = h[1] - t[1], fz = h[2] - t[2]; const fl = hypot(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
+    const L = len * fade, q = qMul(qAxis(0, 1, 0, atan2(fx, fz)), qAxis(1, 0, 0, -Math.asin(clamp(fy, -1, 1))));
+    const st = BST[LG + i], tm = BTMR[LG + i], near = hypot(h[0] - F[CX], h[1] - F[CY], h[2] - F[CZ]);
+    let clip = LEVC.swim, ct = F[TIME] * 0.9 + i * 0.7;
+    const cyc = (p, n) => (F[TIME] + i * 7.3) % p < n;
+    if (st === 1 && !CREATIVE && near < 30) { clip = LEVC.attack; ct = F[TIME] + i; }
+    else if (st === 1 && tm > 38) { clip = LEVC.flare; ct = 40 - tm; }
+    else if (st === 1 && tm > 35.8) { clip = LEVC.roar; ct = 38 - tm; }
+    else if (st === 3 && cyc(20, 9)) { clip = LEVC.lure; ct = F[TIME] + i; }
+    else if (st === 1 || st === 2 || st === 3) { clip = LEVC.fast; ct = F[TIME] + i * 0.3; }
+    else if (cyc(30, 2)) { clip = LEVC.turn; ct = (F[TIME] + i * 7.3) % 30; }
+    const pose = ciPass === 1 ? poseAlloc(LEVM, clip, ct) : -2;
+    ciPut(LEVM, h[0] - fx * L * 0.5, h[1] - fy * L * 0.5, h[2] - fz * L * 0.5, L, q[0], q[1], q[2], q[3], 0, i * 0.37, 0, 0, pose);
+  }
+}
 function ciEmit() {
   subEmit();
   if (PLAYER >= 0) {
     if (THIRD && SUBM.mode === 'out') avatarPut(TPP[0], TPP[1], TPP[2], F[YAW], F[PIT], ME.spd, ME.t, nameHue(SAVE.nick || ''));
     for (const [, P] of NET.peers) if (!P.ride) avatarPut(P.x, P.y, P.z, P.yaw, P.pit, P.spd || 0, P.at || 0, P.L.seed);
   }
+  if (LEVM >= 0) levPut();
   for (let i = 0; i < nTmp; i++) { const L = LMTMP[i]; if (L.k === 13) ciPut(L.cm, L.x, L.y, L.z, L.sc, L.q[0], L.q[1], L.q[2], L.q[3], 0, L.seed, 0, 0); }
   if (PLANTS.length) {
     const R = min(TQ.fogFar * 0.35, 150), x0 = floor((F[CX] - R) / PCELL), x1 = floor((F[CX] + R) / PCELL), z0 = floor((F[CZ] - R) / PCELL), z1 = floor((F[CZ] + R) / PCELL);
@@ -518,7 +587,7 @@ let FG = !!SAVE.fg, PRES = false, genOK = false, genNext = false, fgN = 0;
 let passEasu, passRcas, passGen, bgEasu = [], bgRcas = [], bgGen = null;
 const LP = new Float64Array(12); // pose of the last rendered frame: r, u, f, camera x y z
 let dynN = 0, dynT = 0, dynG = 0, dynGN = 0, dynBad = 0, dynOk = 0, dynWait = 3, dynMin = 1e9, period = 16.7;
-let passScene, passRays, passBlur, bgBlur, passPost, bgRays, bgPost, passShadow, bloomPass = [], bloomBG = [], targets = [];
+let passScene, passSceneB, tDpT, tDsT, passRays, passBlur, bgBlur, passPost, bgRays, bgPost, passShadow, bloomPass = [], bloomBG = [], targets = [];
 const NB = 6;
 function resize(force) {
   DW = max(2, round(canvas.clientWidth * devicePixelRatio)); DH = max(2, round(canvas.clientHeight * devicePixelRatio));
@@ -538,16 +607,21 @@ function resize(force) {
   canvas.width = UPON ? OW : W; canvas.height = UPON ? OH : H;
   ctx.configure({ device, format: FMT, alphaMode: 'opaque' });
   for (const t of targets) t.destroy();
-  const tMS = tex(AA > 1 ? W : 1, H, HDR, TU.RENDER_ATTACHMENT, { samples: AA }), tDp = tex(W, H, DEPTH, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING, { samples: AA });
+  const tMS = tex(AA > 1 ? W : 1, H, HDR, TU.RENDER_ATTACHMENT, { samples: AA }), tDp = tex(W, H, DEPTH, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING | TU.COPY_SRC, { samples: AA });
+  // the depth before the flora is drawn, for the sonar pulse (copied only while one is out)
+  const tDs = tex(W, H, DEPTH, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING | TU.COPY_DST, { samples: AA }); tDpT = tDp; tDsT = tDs;
   const RW = max(1, ceil(W / RAYDIV)), RH = max(1, ceil(H / RAYDIV));
   const tRes = tex(W, H, HDR, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING), tRay = tex(RW, RH, HDR, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING), tRay2 = tex(RW, RH, HDR, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING);
-  targets = [tMS, tDp, tRes, tRay, tRay2];
+  targets = [tMS, tDp, tDs, tRes, tRay, tRay2];
   const bl = [];
   for (let i = 0; i < NB; i++) { const t = tex(max(1, W >> (i + 1)), max(1, H >> (i + 1)), HDR, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING); bl.push(t); targets.push(t); }
   const vDp = tDp.createView(), vRes = tRes.createView(), vRay = tRay.createView(), vRay2 = tRay2.createView(), vBl = bl.map((t) => t.createView());
   // without anti-aliasing the scene goes straight into the resolve target, and tMS is one unused column
   passScene = { colorAttachments: [{ view: AA > 1 ? tMS.createView() : vRes, resolveTarget: AA > 1 ? vRes : undefined, loadOp: 'clear', storeOp: AA > 1 ? 'discard' : 'store', clearValue: [0, 0, 0, 1] }],
     depthStencilAttachment: { view: vDp, depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'store' } };
+  // the scene in two parts around that copy: the first keeps its colour, the second loads it and resolves
+  passSceneB = { colorAttachments: [{ view: AA > 1 ? tMS.createView() : vRes, resolveTarget: AA > 1 ? vRes : undefined, loadOp: 'load', storeOp: AA > 1 ? 'discard' : 'store' }],
+    depthStencilAttachment: { view: vDp, depthLoadOp: 'load', depthStoreOp: 'store' } };
   passRays = { colorAttachments: [colorAtt(vRay, true)] };
   passBlur = { colorAttachments: [colorAtt(vRay2, true)] };
   bgBlur = device.createBindGroup({ layout: pRB.getBindGroupLayout(0), entries: [{ binding: 0, resource: vRay }] });
@@ -574,7 +648,7 @@ function resize(force) {
   bgRays = device.createBindGroup({ layout: pRays.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ubo } }, { binding: 1, resource: sRep }, { binding: 2, resource: sCmp },
     { binding: 3, resource: tShadow.createView() }, { binding: 4, resource: tWater.createView() }, { binding: 5, resource: vDp }] });
   bgPost = device.createBindGroup({ layout: pPost.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ubo } }, { binding: 1, resource: sClamp }, { binding: 2, resource: vRes },
-    { binding: 3, resource: vRay2 }, { binding: 4, resource: vBl[0] }, { binding: 5, resource: vDp }] });
+    { binding: 3, resource: vRay2 }, { binding: 4, resource: vBl[0] }, { binding: 5, resource: vDp }, { binding: 6, resource: tDs.createView() }] });
   bloomPass = []; bloomBG = [];
   // down: res -> b0 -> ... -> b5 ; up: b5 -> b4 (additive) ... -> b0
   for (let i = 0; i < NB; i++) { bloomPass.push({ colorAttachments: [colorAtt(vBl[i], true)] }); bloomBG.push(blitBG(i ? vBl[i - 1] : vRes)); }
@@ -706,7 +780,7 @@ function render() {
   m[44] = fx; m[45] = fy; m[46] = fz; m[47] = NEAR;
   m[51] = F[ZONE];
   let ek = (-cy - 8) / 26; ek = ek < 0 ? 0 : ek > 1 ? 1 : ek;
-  m[56] = EXPO * (0.6 + 0.4 * ek) * (1 + 0.9 * sstep(60, 260, -cy)); m[57] = RAYS; m[58] = det; m[59] = CREATIVE ? 1 : 0; subUniforms(m); // the eye adapts in the deep; mis.w: creative; fog.zw: sub lights, cabin
+  m[56] = EXPO * (0.6 + 0.4 * ek) * (1 + 0.9 * sstep(60, 260, -cy)) * (1 + 0.7 * cvEnc); m[57] = RAYS; m[58] = det; m[59] = CREATIVE ? 1 : 0; subUniforms(m); // the eye adapts in the deep; mis.w: creative; fog.zw: sub lights, cabin
   const cx = F[CX], cz = F[CZ];
   m[60] = cx - floor(cx / 1024) * 1024; m[61] = cz - floor(cz / 1024) * 1024; m[62] = cx - floor(cx / 44) * 44; m[63] = cz - floor(cz / 44) * 44;
   m[64] = TQ.fogFar; m[65] = FOGS;
@@ -714,7 +788,8 @@ function render() {
   let wr = 0, wg = 0, wb = 0, wm = 0, ws = 0;
   for (let i = 0; i < 7; i++) { const w = BIO[i], o = i * 4; wr += w * WATER_C[o]; wg += w * WATER_C[o + 1]; wb += w * WATER_C[o + 2]; wm += w * WATER_C[o + 3]; ws += w; }
   ws = ws || 1; m[68] = wr / ws; m[69] = wg / ws; m[70] = wb / ws; m[71] = wm / ws;
-  for (let i = 32; i < 84; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
+  caveUniforms(m);
+  for (let i = 32; i < 184; i++) if (i !== 52 && i !== 58) UBS[i] = UB[i];
   // frustum planes in render space, from the rows of the view-projection (reversed, infinite depth: no far plane)
   for (let p = 0; p < 5; p++) {
     const a = p >> 1, sg = p & 1 ? -1 : 1, o = p * 4;
@@ -766,19 +841,26 @@ function render() {
     if (nCI) drawCustom(r, pCustSh, pCustShS);
     r.end();
   }
-  // scene
+  // scene (split before the flora while a sonar pulse is out: the pulse reads the depth without it)
+  const split = UB[75] >= 0, c0 = passScene.colorAttachments[0];
+  if (split) { c0.storeOp = 'store'; c0.resolveTarget = undefined; } else { c0.storeOp = AA > 1 ? 'discard' : 'store'; c0.resolveTarget = passSceneB.colorAttachments[0].resolveTarget; }
   r = e.beginRenderPass(passScene);
   r.setBindGroup(0, bg0); r.setBindGroup(1, bg1);
   r.setPipeline(pTerr); r.setIndexBuffer(ibGrid, 'uint32'); drawLevels(r, TQ.fogFar);
   r.setPipeline(pSolid); r.setVertexBuffer(0, vbMesh); r.setIndexBuffer(ibMesh, 'uint32');
   if (nLM) { r.setVertexBuffer(1, lmBuf); drawLandmarks(r); }
+  drawCaves(r);
   for (let k = 0; k < NK; k++) { r.setVertexBuffer(1, svBuf, k * SCAP * 64, SCAP * 64); r.drawIndexedIndirect(argBuf, (6 + k) * 32); }
   r.setPipeline(pManta); r.setVertexBuffer(1, ibManta); r.drawIndexed(MANTA.ib.length, nManta, MANTA.i0, MANTA.v0, 0);
   r.setPipeline(pFish); r.setVertexBuffer(1, ibFish); r.drawIndexed(FISH.ib.length, nFish, FISH.i0, FISH.v0, 0);
   if (nCI) { drawCustom(r, pCust, pCustS); r.setIndexBuffer(ibMesh, 'uint32'); r.setVertexBuffer(0, vbMesh); }
   if (nTurtle) { r.setPipeline(pTurtle); r.setVertexBuffer(1, ibTurtle); r.drawIndexed(TURTLE.ib.length, nTurtle, TURTLE.i0, TURTLE.v0, 0); }
-  if (nLev) { r.setPipeline(pLev); r.setVertexBuffer(1, ibLev); r.drawIndexed(LEVI.ib.length, nLev, LEVI.i0, LEVI.v0, 0); }
+  if (nLev && LEVM < 0) { r.setPipeline(pLev); r.setVertexBuffer(1, ibLev); r.drawIndexed(LEVI.ib.length, nLev, LEVI.i0, LEVI.v0, 0); }
   if (nSquid) { r.setPipeline(pSquid); r.setVertexBuffer(1, ibSquid); r.drawIndexed(SQUID.ib.length, nSquid, SQUID.i0, SQUID.v0, 0); }
+  if (split) {
+    r.end(); e.copyTextureToTexture({ texture: tDpT }, { texture: tDsT }, [W, H]);
+    r = e.beginRenderPass(passSceneB); r.setBindGroup(0, bg0); r.setBindGroup(1, bg1);
+  }
   // kelp: 9-row blades up close, 5 rows mid-range, every 2nd blade (wider) with 3 rows far away; then ground cover
   r.setPipeline(pKN); r.drawIndirect(argBuf, 0);
   r.setPipeline(pKM); r.drawIndirect(argBuf, 32);
@@ -855,6 +937,8 @@ function collide() {
   }
 }
 const CR = 0.5;
+// how high you can go: your head out of the water (survival), or flying over the sea (creative)
+const YTOP = () => (CREATIVE ? 160 : 0.35);
 
 // frame-time target: phones and tablets hold 60 fps with headroom (thermals); desktops follow the display, up to 165 Hz
 const target = () => (TFPS ? 850 / TFPS : TQ.tbdr ? 11.7 : clamp(period * 0.8, 4.6, 13.6)) * (FG ? 1.8 : 1);
@@ -902,7 +986,7 @@ function frame(now) {
     const sp = kt ? 90 : ks || tN > 1 ? 26 : 7, k = 1 - exp(-dt * 4.5), mf = tId >= 0 ? 0.7 : kf - kb, mr = kr - kl, mu = ku - kd, cp = cos(pitch), sy = sin(yaw), cw = cos(yaw);
     const vx = F[VX] + ((sy * cp * mf + cw * mr) * sp - F[VX]) * k, vy = F[VY] + ((sin(pitch) * mf + mu) * sp - F[VY]) * k, vz = F[VZ] + ((-cw * cp * mf + sy * mr) * sp - F[VZ]) * k;
     let x = F[CX] + vx * dt, y = F[CY] + vy * dt, z = F[CZ] + vz * dt;
-    x = clamp(x, -WORLD_MAX, WORLD_MAX); z = clamp(z, -WORLD_MAX, WORLD_MAX); y = y < -490 ? -490 : y > -1.2 ? -1.2 : y;
+    x = clamp(x, -WORLD_MAX, WORLD_MAX); z = clamp(z, -WORLD_MAX, WORLD_MAX); y = y < -490 ? -490 : y > YTOP() ? YTOP() : y;
     F[YAW] = yaw; F[PIT] = pitch; F[VX] = vx; F[VY] = vy; F[VZ] = vz;
     updateLandmarks(); // before collide(): it brings the nearby landmark SDFs
     F[MX] = x - F[CX]; F[MY] = y - F[CY]; F[MZ] = z - F[CZ];
@@ -916,6 +1000,7 @@ function frame(now) {
   for (let i = 0; i < 7; i++) BIO[i] += (TB[i + 1] - BIO[i]) * kz;
   F[ZONE] = BIO[1] * BIO[1] * (3 - 2 * BIO[1]);
   FDT = dt;
+  caveTick(TQ.tbdr ? 3 : 4); // mesh the caves nearby, a few milliseconds a frame
   // third person: the scene renders from behind and above the diver (F[C*] is the eye until thirdOut)
   const tp = THIRD && PLAYER >= 0 && SUBM.mode === 'out';
   if (tp) thirdIn(dt);
@@ -973,6 +1058,18 @@ function place(x, z, lookX, lookZ, lift = 7) {
 // key 0: just ahead of the nearest leviathan on its swim path and a little to the side, looking back at its head,
 // so it swims past you (its path is known exactly: same formula as vsLev)
 let levTurn = 0;
+// the nearest cave: in front of its mouth, looking in (it is meshed on the spot)
+function toCave() {
+  const S = findCave(F[CX], F[CZ]); if (!S) return;
+  caveNow(S);
+  const M = S.mouths[0], g = M.g, dx = M.b[0] - M.a[0], dz = M.b[2] - M.a[2], l = hypot(dx, dz) || 1;
+  // above and in front of the mouth, high enough to clear the ground around it, looking down into it
+  const x = g[0] - dx / l * 70, z = g[2] - dz / l * 70; // in front of the knoll, facing the opening
+  place(x, z, g[0], g[2], 8);
+  F[CY] = min(max(g[1] + 10, hAt(x, z) + 6), -4);
+  F[PIT] = -atan2(F[CY] - g[1] - 4, hypot(g[0] - x, g[2] - z));
+  jumpName = `a ${CAVE_THEMES[S.theme]} cave`;
+}
 function toLeviathan() {
   // each press goes to the next one: every imported leviathan in turn, then the nearest built-in one
   const imp = []; for (let s = 0; s < LIFEN[6]; s++) if (CSK[s] === 1) imp.push(s);
@@ -1037,7 +1134,7 @@ function thirdIn(dt) {
   let d = 0.6; const want = 3.4;
   for (let k = 1; k <= 12; k++) { const t = want * k / 12; if (sdScene(TPP[0] - fx * t, TPP[1] - fy * t + 0.08 * t, TPP[2] - fz * t) < 0.35) break; d = t; }
   tpDist += (d - tpDist) * (d < tpDist ? 1 : 1 - Math.exp(-dt * 3));
-  F[CX] = TPP[0] - fx * tpDist; F[CY] = min(TPP[1] - fy * tpDist + 0.08 * tpDist, -0.6); F[CZ] = TPP[2] - fz * tpDist;
+  F[CX] = TPP[0] - fx * tpDist; F[CY] = min(TPP[1] - fy * tpDist + 0.08 * tpDist, YTOP() + 0.6); F[CZ] = TPP[2] - fz * tpDist;
   updateLandmarks(); // camera-relative instance positions for the new eye
 }
 function thirdOut() { F[CX] = TPP[0]; F[CY] = TPP[1]; F[CZ] = TPP[2]; }
@@ -1137,7 +1234,7 @@ $('cv').onclick = (e) => { e.currentTarget.blur(); toggleView(); };
 for (const id of ['o', 'cv']) { $(id).tabIndex = -1; $(id).addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); }); }
 // Go to (World tab): the jump keys as buttons, for touch screens; jumps, then dives in
 let bioTurn = 0;
-$('gt').querySelectorAll('button').forEach((b) => { b.onclick = () => { const j = b.dataset.j; if (j === 'lev') toLeviathan(); else if (j === 'sub') { if (SUBM.m < 0) return; const p = subW(SUBM, mark('hatch')); place(p[0] + 3, p[2] + 3, SUBM.x, SUBM.z, 0); F[CY] = clamp(p[1] + 2, hAt(F[CX], F[CZ]) + 2, -1.2); jumpName = 'your submarine'; } else if (j === 'big') jump(7); else if (j === 'minor') jump(8); else jump(bioTurn++ % 7); go(); }; });
+$('gt').querySelectorAll('button').forEach((b) => { b.onclick = () => { const j = b.dataset.j; if (j === 'lev') toLeviathan(); else if (j === 'cave') toCave(); else if (j === 'sub') { if (SUBM.m < 0) return; const p = subW(SUBM, mark('hatch')); place(p[0] + 3, p[2] + 3, SUBM.x, SUBM.z, 0); F[CY] = clamp(p[1] + 2, hAt(F[CX], F[CZ]) + 2, -1.2); jumpName = 'your submarine'; } else if (j === 'big') jump(7); else if (j === 'minor') jump(8); else jump(bioTurn++ % 7); go(); }; });
 // game mode (World tab): survival, or creative where creatures do not notice you; applied at once
 function setMode(m) { CREATIVE = m === 'creative'; document.documentElement.classList.toggle('cr', CREATIVE); if (!CREATIVE && conOpen) conShow(false); save({ mode: m }); $('gm').querySelectorAll('button').forEach((b) => { b.className = b.dataset.m === m ? 'on' : ''; }); $('gmn').textContent = CREATIVE ? 'Creative: you are invisible to the creatures (nothing stalks, flees from or comes to look at you).' : 'Survival: creatures notice you: leviathans stalk and lunge, shy creatures flee, curious ones come closer.'; }
 $('gm').querySelectorAll('button').forEach((b) => { b.onclick = () => setMode(b.dataset.m); });
@@ -1360,3 +1457,5 @@ await say('Letting the light in…', 1, 400);
 setTimeout(() => save({ loading: 0 }), 15e3); // the load counts as survived after 15 s of frames
 ui(true);
 requestAnimationFrame((t) => { F[LAST] = t; requestAnimationFrame(frame); });
+// developer mode (?dev=1): an inspector for the page's state, from the browser console or adb
+if (/[?&]dev=1/.test(location.search)) window.__ev = (s) => eval(s);
