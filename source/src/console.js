@@ -77,7 +77,8 @@ function conRun(line) {
     case '': return '';
     case 'help': return ['/spawn <model | leviathan | school | manta | turtle | jelly | squid> [count]: in front of you',
       '/kill: remove what /spawn added', '/attack: the nearest imported leviathan lunges at you', '/roar, /hunt: its roar, or start hunting',
-      '/anim <clip>: the nearest animated model plays that clip', '/tp <x> <z> [y] | /tp leviathan | landmark | structure | cave | surface | biome',
+      '/anim <clip>: the nearest animated model plays that clip', '/tp <x> <z> [y] | /tp leviathan | landmark | structure | surface | biome',
+      '/tp cave [fungus | crystal | lava | brine | cove] | /tp cavern [lava | brine | cove]: the nearest cave of that kind',
       '/sub: park your submarine in front of you; /hull <0-100>, /power <0-100>',
       '/mode survival | creative', '/time cycle | dawn | noon | dusk | night', '/weather auto | clear | cloudy | overcast | rain | storm | thunderstorm', '/list: loaded models and their clips', '/import <url> [class | auto]: add a model from a URL',
       '/clear: empty this log'].join('\n');
@@ -89,8 +90,12 @@ function conRun(line) {
     case 'anim': return a[0] ? cmdClip(a[0], -1, false) : 'which clip? /list shows them';
     case 'tp': {
       if (a[0] === 'leviathan') { toLeviathan(); return 'jumped to ' + jumpName; }
-      if (a[0] === 'cave') { toCave(); return 'jumped to ' + jumpName; }
-      if (a[0] === 'cavern') { toCave(true); const S = findCave(F[CX], F[CZ], true); return 'jumped to ' + jumpName; }
+      // /tp cave [fungus | crystal | lava | brine | cove], /tp cavern [lava | brine | cove]: the nearest of that kind
+      if (a[0] === 'cave' || a[0] === 'cavern') {
+        const TH = { fungus: 0, crystal: 1, lava: 2, brine: 3, cove: 4 }, th = a[1] ? TH[a[1]] : -1;
+        if (a[1] && th === undefined) return 'tp cave fungus | crystal | lava | brine | cove; tp cavern lava | brine | cove';
+        toCave(a[0] === 'cavern' || th >= 3, th); return 'jumped to ' + jumpName;
+      }
       if (a[0] === 'surface') { F[CY] = YTOP(); F[PIT] = 0.15; return 'at the surface'; }
       if (a[0] === 'landmark') { jump(7); return 'jumped to ' + jumpName; }
       if (a[0] === 'structure') { jump(8); return 'jumped to ' + jumpName; }

@@ -10,7 +10,7 @@
 // by the rock shader with the daylight that reaches each vertex (n.w) and the cave's theme (fungus, crystal, lava).
 // Things grow on the walls (giant glowing fungi, crystals, vent chimneys, rocks) and the brightest of them light the
 // cave: the 8 nearest are point lights in G (cavL). Collision: sdScene() takes the cave as water (caveWater).
-const CAVE_CELL = 640, CVS = new Map(), CV_CS = LV > 1 ? 3.2 : 2.5, CV_B = 16, CV_AMP = 4, CV_LIP = -0.35; // the walls stop just under the seabed: no rim above it (the GPU hole is a little smaller)
+const CAVE_CELL = 960, CVS = new Map(), CV_CS = LV > 1 ? 3.2 : 2.5, CV_B = 16, CV_AMP = 4, CV_LIP = 0.5; // the tunnel walls rise 0.5 m over the seabed, a low rim around the hole (cut a little wider than the tunnel)
 const CVR = []; // the systems with a finished mesh
 let cvGenS = null, cvGenI = null; // the one being meshed
 const CAVE_THEMES = ['glowing fungus', 'crystal', 'lava', 'brine river', 'bioluminescent cove'];
@@ -49,14 +49,14 @@ function caveSys(gx, gz) {
   let ax = 0, az = 0, bx = 0, bz = 0, found = false;
   for (let t = 0; t < 12 && !found; t++) {
     ax = x0 + R() * W; az = z0 + R() * W;
-    const yaw = R() * TAU, L = 250 + 170 * R();
+    const yaw = R() * TAU, L = 360 + 260 * R();
     bx = ax + cos(yaw) * L; bz = az + sin(yaw) * L;
     found = inC(bx, bz);
   }
   if (!found) return S;
   const ha = hAt(ax, az), hb = hAt(bx, bz);
   if (ha > -24 || hb > -24 || ha < -400 || hb < -400) return S;
-  const r = 13 + 4 * R();
+  const r = 17 + 7 * R(); // tunnels 34-48 m wide
   const dl = hypot(bx - ax, bz - az), ux = (bx - ax) / dl, uz = (bz - az) / dl, px = -uz, pz = ux;
   // mouth capsules: from just above the ground outside to well under it, sloping in
   // a mouth: a gently sloping capsule that starts just above the ground in front and runs in under a rocky knoll, so the
@@ -75,7 +75,7 @@ function caveSys(gx, gz) {
   for (let i = 1; i <= nMid; i++) {
     const t = i / (nMid + 1), wob = (i === 2 ? side : (R() - 0.5) * 2) * (40 + 50 * R());
     const [x, z] = cl(ax + (bx - ax) * t + px * wob, az + (bz - az) * t + pz * wob);
-    pts.push([x, cvLow(x, z, r) - r - 18 - 40 * R(), z]);
+    pts.push([x, cvLow(x, z, r) - r - 35 - 80 * R(), z]); // 35-115 m of rock overhead
   }
   pts.push(mB.b, mB.a);
   // Catmull-Rom through the interior points (the mouths are straight capsules); samples about every 9 m
@@ -111,10 +111,10 @@ function caveSys(gx, gz) {
   // a giant cavern instead of the chamber, 40 % of systems: a hall 140-220 m across and about 100 m high, deep under
   // the rock, made of flattened lobes, with rock pillars and a natural arch across it, joined to the tunnel by a shaft
   const rocks = []; let cav = null;
-  if (R() < 0.4) {
-    const Rh = 70 + 40 * R(), H = 42 + 18 * R();
+  if (R() < 0.5) {
+    const Rh = 110 + 70 * R(), H = 65 + 30 * R(); // halls 220-360 m across, 130-190 m high
     const cx = clamp(mid[0], x0 + Rh, x0 + W - Rh), cz = clamp(mid[2], z0 + Rh, z0 + W - Rh);
-    const top = cvLow(cx, cz, Rh * 0.8) - 28;
+    const top = cvLow(cx, cz, Rh * 0.8) - 40;
     let cy = top - H; if (cy - H < -480) cy = -480 + H;
     if (cy + H < top + 1 && Rh * 2 < W) {
       cav = { x: cx, y: cy, z: cz, Rh, H };
@@ -125,12 +125,12 @@ function caveSys(gx, gz) {
       chambers.push([cx, cy, cz, Rh]);
     }
   }
-  if (!cav) room(mid, 30 + 18 * R());
+  if (!cav) room(mid, 45 + 25 * R());
   // a side passage to a dead-end grotto, 45 % of systems
   if (R() < 0.45) {
     const sgn = R() < 0.5 ? -1 : 1, L = 110 + 60 * R();
     const [ex, ez] = cl(mid[0] + px * sgn * L + ux * (R() - 0.5) * 60, mid[2] + pz * sgn * L + uz * (R() - 0.5) * 60);
-    const Rg = 22 + 10 * R(), ey = min(mid[1] + (R() - 0.5) * 30, cvLow(ex, ez, Rg) - Rg - 10);
+    const Rg = 32 + 15 * R(), ey = min(mid[1] + (R() - 0.5) * 30, cvLow(ex, ez, Rg) - Rg - 10);
     if (ey - Rg > -486) {
       const n = max(3, ceil(hypot(ex - mid[0], ez - mid[2]) / 10)), rb = r * 0.82;
       let prev = [mid[0], mid[1], mid[2]];
@@ -260,6 +260,7 @@ function* cvMesh(S) {
       const v = [F[c0], F[c0 + 1], F[c0 + N], F[c0 + N + 1], F[c0 + N * N], F[c0 + N * N + 1], F[c0 + N * N + N], F[c0 + N * N + N + 1]];
       for (let q = 0; q < 8; q++) if (v[q] > 0) m |= 1 << q;
       const ci = (k * C1 + j) * C1 + i;
+      const tAny = ground && (T[c0] | T[c0 + 1] | T[c0 + N] | T[c0 + N + 1] | T[c0 + N * N] | T[c0 + N * N + 1] | T[c0 + N * N + N] | T[c0 + N * N + N + 1]);
       if (m === 0 || m === 255) { CI[ci] = -1; continue; }
       let sx = 0, sy = 0, sz = 0, c = 0;
       for (const [a, b] of EDG) {
@@ -272,7 +273,9 @@ function* cvMesh(S) {
       let gx = wf(x + e, y, z, hg) - wf(x - e, y, z, hg), gy = wf(x, y + e, z, hg) - wf(x, y - e, z, hg), gz = wf(x, y, z + e, hg) - wf(x, y, z - e, hg);
       const gl = hypot(gx, gy, gz) || 1; gx /= gl; gy /= gl; gz /= gl;
       if (nv >= cap) grow();
-      pos[nv * 3] = x - S.ox; pos[nv * 3 + 1] = y; pos[nv * 3 + 2] = z - S.oz;
+      // where this mesh meets the seabed (a cell next to the seabed's part of the field), its edge sinks 1.3 m under the
+      // ground: the clipmap covers the join, with no sliver of open water between them
+      pos[nv * 3] = x - S.ox; pos[nv * 3 + 1] = tAny && y > hg - 1.3 && cvMound(S, x, y, z) < 2 && cvField(S, list, nl, x, y, z) > 1.5 ? hg - 1.3 : y; // the knoll's base only, not the tunnel's rim pos[nv * 3 + 2] = z - S.oz;
       const op = ground && y > hg - 1 ? 1 : cvOpen(S, x, y, z);
       nrm[nv * 4] = round(gx * 127); nrm[nv * 4 + 1] = round(gy * 127); nrm[nv * 4 + 2] = round(gz * 127); nrm[nv * 4 + 3] = round(op * 127);
       CI[ci] = nv++;
@@ -324,7 +327,7 @@ function* cvMesh(S) {
 const CV_GLOW = { fungusPink: [1, 0.3, 0.9], fungusTeal: [0.25, 1, 0.85], cyan: [0.22, 0.95, 1], amber: [1, 0.6, 0.16], violet: [0.72, 0.32, 1], lava: [1, 0.32, 0.05] };
 function cvDecor(S) {
   const R = cvRand(S.seed * 4294967296 + 77), P = S.pos, Nn = S.nrm, nv = S.nv, items = [], lights = [];
-  const want = clamp((nv / 70) | 0, 40, S.cav ? 260 : 150);
+  const want = clamp((nv / 70) | 0, 40, S.cav ? 380 : 200);
   const qUp = (nx, ny, nz, spin) => {
     const ax = nz, az = -nx, l = hypot(ax, az), ang = Math.acos(clamp(ny, -1, 1));
     const q = l < 1e-4 ? (ny > 0 ? [0, 0, 0, 1] : [1, 0, 0, 0]) : qAxis(ax, 0, az, ang);
@@ -389,7 +392,7 @@ function cvDecor(S) {
   // the cavern's pool lights it from below; the cove gets a great glowing growth in the middle of its floor
   if (S.cav) {
     const C = S.cav;
-    if (C.pool !== undefined) for (let t = 0; t < 26; t++) { const a = R() * TAU, o = sqrt(R()) * C.Rh * 0.8; lights.push({ x: C.x + cos(a) * o, y: C.pool + 3, z: C.z + sin(a) * o, rad: 48, c: S.theme === 2 ? [1, 0.36, 0.06] : [0.3, 1, 0.42], i: S.theme === 2 ? 1.6 : 0.9 }); }
+    if (C.pool !== undefined) for (let t = 0; t < 40; t++) { const a = R() * TAU, o = sqrt(R()) * C.Rh * 0.8; lights.push({ x: C.x + cos(a) * o, y: C.pool + 3, z: C.z + sin(a) * o, rad: 75, c: S.theme === 2 ? [1, 0.36, 0.06] : [0.3, 1, 0.42], i: S.theme === 2 ? 1.6 : 0.9 }); }
     if (S.theme === 4) {
       const fy = C.y - C.H * 0.75;
       for (let k = 0; k < 9; k++) { const a = k * 0.7, lean = k ? 0.35 + 0.25 * R() : 0, sc = k ? 6 + 5 * R() : 14, q = qMul(qAxis(0, 1, 0, a), qAxis(1, 0, 0, lean));
@@ -408,7 +411,7 @@ const CV_SEGL = new Int32Array(4096);
 let cvEnc = 0, cvIn = null;
 function caveTick(budget) {
   const cx = F[CX], cy = F[CY], cz = F[CZ];
-  const g0 = floor((cx - 900) / CAVE_CELL), g1 = floor((cx + 900) / CAVE_CELL), h0 = floor((cz - 900) / CAVE_CELL), h1 = floor((cz + 900) / CAVE_CELL);
+  const g0 = floor((cx - 1300) / CAVE_CELL), g1 = floor((cx + 1300) / CAVE_CELL), h0 = floor((cz - 1300) / CAVE_CELL), h1 = floor((cz + 1300) / CAVE_CELL);
   if (!cvGenS) {
     let best = null, bd = 1e18;
     for (let gz = h0; gz <= h1; gz++) for (let gx = g0; gx <= g1; gx++) {
@@ -426,7 +429,7 @@ function caveTick(budget) {
     }
   }
   // drop meshes far away
-  for (let i = CVR.length - 1; i >= 0; i--) { const S = CVR[i]; if (hypot(S.ox - cx, S.oz - cz) > 1500) { caveDrop(S); S.vb = S.ib = null; S.decor = S.lights = null; CVR.splice(i, 1); } }
+  for (let i = CVR.length - 1; i >= 0; i--) { const S = CVR[i]; if (hypot(S.ox - cx, S.oz - cz) > 2100) { caveDrop(S); S.vb = S.ib = null; S.decor = S.lights = null; CVR.splice(i, 1); } }
   // inside a cave? (the camera under the seabed, in a cave's water)
   const hg = hAt(cx, cz);
   let enc = 0;
@@ -507,14 +510,14 @@ function caveMouthNear(x, z, rad) {
   return false;
 }
 // the nearest cave system (spiralling out over cells), for Go to and /cave
-function findCave(fx, fz, cavern = false) {
+function findCave(fx, fz, cavern = false, theme = -1) {
   const c0 = floor(fx / CAVE_CELL), c1 = floor(fz / CAVE_CELL);
-  for (let r = 0; r < 40; r++) {
+  for (let r = 0; r < 30; r++) {
     let best = null, bd = 1e18;
     for (let gz = c1 - r; gz <= c1 + r; gz++) for (let gx = c0 - r; gx <= c0 + r; gx++) {
       if (max(abs(gx - c0), abs(gz - c1)) !== r) continue;
       const S = caveSys(gx, gz);
-      if (!S.ok || (cavern && !S.cav)) continue;
+      if (!S.ok || (cavern && !S.cav) || (theme >= 0 && S.theme !== theme)) continue;
       const d = hypot(S.mouths[0].g[0] - fx, S.mouths[0].g[2] - fz);
       if (d > 60 && d < bd) { bd = d; best = S; }
     }
